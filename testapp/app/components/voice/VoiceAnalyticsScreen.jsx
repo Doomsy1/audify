@@ -65,6 +65,7 @@ export function VoiceAnalyticsScreen({
     "Show me this week's trend",
     "Play that trend again slower",
     "What caused the spike?",
+    "Show me traffic vs revenue",
   ];
 
   async function handleTextSubmit(event) {
