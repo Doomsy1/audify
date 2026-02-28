@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 export function SuggestedQuestions({ questions, disabled, onSelect }) {
   if (!questions?.length) {
     return null;

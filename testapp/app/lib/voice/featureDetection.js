@@ -8,7 +8,7 @@ function hasSpeechRecognition(globalLike) {
   );
 }
 
-export function detectVoiceCapabilities(globalLike = globalThis?.window) {
+export function detectVoiceCapabilities(globalLike = typeof window !== "undefined" ? window : null) {
   const speechRecognitionSupported = hasSpeechRecognition(globalLike);
 
   return {

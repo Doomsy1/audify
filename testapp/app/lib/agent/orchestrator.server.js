@@ -151,7 +151,7 @@ function buildToolPlan(intent, memory, requestBody) {
   }
 }
 
-async function executePlan(plan) {
+async function executePlan(plan, toolContext) {
   const toolTrace = [];
   const results = new Map();
 
@@ -162,7 +162,7 @@ async function executePlan(plan) {
       args.series = results.get(step.args.seriesFrom);
     }
 
-    const result = await runAgentTool(step.tool, args);
+    const result = await runAgentTool(step.tool, args, toolContext);
     results.set(step.tool, result.data);
     toolTrace.push({
       tool: step.tool,
@@ -347,7 +347,7 @@ function buildAudioArray(ttsClip, sonification) {
   return audio;
 }
 
-export async function respondToAgentRequest({ payload, shop }) {
+export async function respondToAgentRequest({ payload, shop, accessToken }) {
   const requestBody = normalizeAgentRequest(payload);
   const memoryKey = buildMemoryKey({
     shop,
@@ -356,7 +356,10 @@ export async function respondToAgentRequest({ payload, shop }) {
   const memory = getAgentMemory(memoryKey);
   const intent = parseIntent(requestBody.utterance);
   const plan = buildToolPlan(intent, memory, requestBody);
-  const { results, toolTrace } = await executePlan(plan);
+  const { results, toolTrace } = await executePlan(plan, {
+    shop,
+    accessToken,
+  });
   const fallbackResponse = buildDeterministicResponse({
     intent,
     memory,

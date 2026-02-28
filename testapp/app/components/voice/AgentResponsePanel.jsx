@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 export function AgentResponsePanel({ response }) {
   const bullets = response?.display?.bullets ?? [];
 

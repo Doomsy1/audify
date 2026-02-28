@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 export function PushToTalkButton({
   speechRecognitionSupported,
   isRecording,
@@ -13,14 +14,27 @@ export function PushToTalkButton({
     );
   }
 
+  function handlePointerDown(event) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    onPressStart?.();
+  }
+
+  function handlePointerUp(event) {
+    event.preventDefault();
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onPressEnd?.();
+  }
+
   return (
     <button
       type="button"
       disabled={disabled}
-      onPointerDown={onPressStart}
-      onPointerUp={onPressEnd}
-      onPointerCancel={onPressEnd}
-      onPointerLeave={onPressEnd}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
       style={{
         border: "none",
         borderRadius: 24,

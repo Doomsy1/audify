@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 export function ListenModeToggle({ enabled, onChange }) {
   return (
     <label

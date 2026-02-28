@@ -26,6 +26,7 @@ export const action = async ({ request }) => {
     const response = await respondToAgentRequest({
       payload,
       shop: session?.shop,
+      accessToken: session?.accessToken,
     });
 
     return Response.json(response);

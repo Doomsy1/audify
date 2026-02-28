@@ -60,3 +60,25 @@ test("formatVoiceRequestError returns friendly message for html responses", () =
     "Voice endpoint returned HTML (404). Verify /api/agent/respond exists and returns JSON.",
   );
 });
+
+test("formatVoiceRequestError returns API-provided json message", () => {
+  const message = formatVoiceRequestError({
+    status: 400,
+    contentType: "application/json",
+    bodyText: "{\"error\":\"utterance is required\"}",
+    responseJson: { error: "utterance is required" },
+  });
+
+  assert.equal(message, "utterance is required");
+});
+
+test("formatVoiceRequestError returns server fallback for 5xx", () => {
+  const message = formatVoiceRequestError({
+    status: 502,
+    contentType: "text/plain",
+    bodyText: "bad gateway",
+    responseJson: null,
+  });
+
+  assert.equal(message, "Voice request failed with a server error");
+});

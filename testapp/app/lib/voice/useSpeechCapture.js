@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { detectVoiceCapabilities } from "./featureDetection.js";
 
-function getRecognitionClass(globalLike = globalThis?.window) {
+function getRecognitionClass(globalLike = typeof window !== "undefined" ? window : null) {
   if (!globalLike) {
     return null;
   }
@@ -24,6 +24,7 @@ export function useSpeechCapture({ onFinalTranscript } = {}) {
   const isPressingRef = useRef(false);
   const hasFinalTranscriptRef = useRef(false);
   const hasFatalErrorRef = useRef(false);
+  const restartTimerRef = useRef(null);
   const capabilities = useMemo(() => detectVoiceCapabilities(), []);
 
   const beginRecognitionSession = useCallback(() => {
@@ -57,11 +58,13 @@ export function useSpeechCapture({ onFinalTranscript } = {}) {
 
       if (final) {
         const transcript = final.trim();
-        setFinalTranscript(transcript);
-        setInterimTranscript("");
-        hasFinalTranscriptRef.current = true;
-        if (transcript && onFinalTranscript) {
-          onFinalTranscript(transcript);
+        if (transcript) {
+          setFinalTranscript(transcript);
+          setInterimTranscript("");
+          hasFinalTranscriptRef.current = true;
+          if (onFinalTranscript) {
+            onFinalTranscript(transcript);
+          }
         }
       }
     };
@@ -75,7 +78,11 @@ export function useSpeechCapture({ onFinalTranscript } = {}) {
           hasFatalError: hasFatalErrorRef.current,
         })
       ) {
-        beginRecognitionSession();
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (!isPressingRef.current) return;
+          beginRecognitionSession();
+        }, 80);
         return;
       }
       setIsRecording(false);
@@ -85,17 +92,27 @@ export function useSpeechCapture({ onFinalTranscript } = {}) {
       const errorCode = event?.error || "";
       hasFatalErrorRef.current =
         errorCode === "not-allowed" || errorCode === "service-not-allowed";
-      setIsRecording(false);
+
+      if (hasFatalErrorRef.current) {
+        setIsRecording(false);
+      }
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (_) {
+      recognitionRef.current = null;
+      setIsRecording(false);
+      return false;
+    }
     setIsRecording(true);
     return true;
   }, [onFinalTranscript]);
 
   const stop = useCallback(() => {
     isPressingRef.current = false;
+    clearTimeout(restartTimerRef.current);
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;

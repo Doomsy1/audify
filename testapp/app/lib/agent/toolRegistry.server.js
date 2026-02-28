@@ -1,6 +1,8 @@
-import { putClip } from "../audio/clipStore.server";
-import { createToneWave } from "../audio/simpleWave.server";
-import { clamp } from "../contracts/agent";
+import { putClip } from "../audio/clipStore.server.js";
+import { createToneWave } from "../audio/simpleWave.server.js";
+import { clamp } from "../contracts/agent.js";
+
+const SHOPIFY_ADMIN_API_VERSION = "2025-10";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PRODUCT_KEYS = ["Starter Bundle", "Repeat Favorite", "Seasonal Drop"];
@@ -66,8 +68,7 @@ function getDataset() {
   return buildDailyDataset();
 }
 
-function resolveRange(range, start, end) {
-  const data = getDataset();
+function resolveRange(range, start, end, data = getDataset()) {
   switch (range) {
     case "today":
       return data.slice(-1);
@@ -89,7 +90,165 @@ function resolveRange(range, start, end) {
   }
 }
 
-function summarizeDays(days, range) {
+function getUtcDayBounds(daysBackStart, daysBackEnd = 0) {
+  const now = new Date();
+  const start = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - daysBackStart,
+    0, 0, 0, 0,
+  ));
+  const end = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - daysBackEnd,
+    23, 59, 59, 999,
+  ));
+  return { start, end };
+}
+
+function pickFetchWindow(range, start, end) {
+  if (range === "custom" && (start || end)) {
+    return {
+      start: start ? new Date(start) : getUtcDayBounds(29).start,
+      end: end ? new Date(end) : new Date(),
+    };
+  }
+  if (range === "today") return getUtcDayBounds(0);
+  if (range === "yesterday") return getUtcDayBounds(1, 1);
+  if (range === "last_7d") return getUtcDayBounds(6);
+  return getUtcDayBounds(29);
+}
+
+function parseLinkHeader(linkHeader) {
+  if (!linkHeader) return "";
+  const parts = linkHeader.split(",");
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed.endsWith('rel="next"')) continue;
+    const match = trimmed.match(/<([^>]+)>/);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+async function fetchOrdersFromShopify({ shop, accessToken, range, start, end }) {
+  const window = pickFetchWindow(range, start, end);
+  let url = new URL(`https://${shop}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/orders.json`);
+  url.searchParams.set("status", "any");
+  url.searchParams.set("limit", "250");
+  url.searchParams.set("created_at_min", window.start.toISOString());
+  url.searchParams.set("created_at_max", window.end.toISOString());
+  url.searchParams.set("fields", "created_at,current_total_price,line_items");
+
+  const orders = [];
+  for (let page = 0; page < 5 && url; page += 1) {
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Shopify orders (${response.status})`);
+    }
+
+    const payload = await response.json();
+    orders.push(...(Array.isArray(payload?.orders) ? payload.orders : []));
+
+    const nextUrl = parseLinkHeader(response.headers.get("link"));
+    url = nextUrl ? new URL(nextUrl) : null;
+  }
+
+  return orders;
+}
+
+function toNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return numeric;
+}
+
+function formatProductKey(title) {
+  if (typeof title !== "string") return "Untitled Product";
+  const trimmed = title.trim();
+  return trimmed || "Untitled Product";
+}
+
+export function aggregateDailyFromOrders(orders) {
+  const byDay = new Map();
+
+  for (const order of orders) {
+    const orderDate = new Date(order?.created_at);
+    if (Number.isNaN(orderDate.getTime())) continue;
+    const dayKey = toIsoDay(orderDate);
+    const current = byDay.get(dayKey) ?? {
+      dateIso: dayKey,
+      revenue: 0,
+      orders: 0,
+      aov: 0,
+      productBreakdownMap: new Map(),
+    };
+
+    const orderRevenue = toNumber(order?.current_total_price);
+    current.revenue += orderRevenue;
+    current.orders += 1;
+
+    const lineItems = Array.isArray(order?.line_items) ? order.line_items : [];
+    for (const item of lineItems) {
+      const key = formatProductKey(item?.title);
+      const quantity = Math.max(0, Math.round(toNumber(item?.quantity)));
+      const lineValue = toNumber(item?.price) * quantity;
+      const row = current.productBreakdownMap.get(key) ?? { key, value: 0, orders: 0 };
+      row.value += lineValue;
+      row.orders += quantity;
+      current.productBreakdownMap.set(key, row);
+    }
+
+    byDay.set(dayKey, current);
+  }
+
+  return [...byDay.values()]
+    .sort((a, b) => new Date(a.dateIso).getTime() - new Date(b.dateIso).getTime())
+    .map((entry) => ({
+      dateIso: entry.dateIso,
+      revenue: roundCurrency(entry.revenue),
+      orders: entry.orders,
+      aov: entry.orders ? roundCurrency(entry.revenue / entry.orders) : 0,
+      productBreakdown: [...entry.productBreakdownMap.values()]
+        .sort((a, b) => b.value - a.value)
+        .map((row) => ({
+          key: row.key,
+          value: roundCurrency(row.value),
+          orders: row.orders,
+        })),
+    }));
+}
+
+async function resolveDataset(context, args) {
+  if (context?.shop && context?.accessToken) {
+    try {
+      const orders = await fetchOrdersFromShopify({
+        shop: context.shop,
+        accessToken: context.accessToken,
+        range: args.range ?? "last_30d",
+        start: args.start,
+        end: args.end,
+      });
+      const fromOrders = aggregateDailyFromOrders(orders);
+      if (fromOrders.length) {
+        return fromOrders;
+      }
+    } catch (_) {
+      // Fall through to deterministic synthetic data for resilience.
+    }
+  }
+
+  return getDataset();
+}
+
+export function summarizeDays(days, range) {
   const revenue = days.reduce((sum, entry) => sum + entry.revenue, 0);
   const orders = days.reduce((sum, entry) => sum + entry.orders, 0);
   const aov = orders ? roundCurrency(revenue / orders) : 0;
@@ -120,8 +279,8 @@ function toPercent(value, previous) {
   return roundCurrency(((value - previous) / previous) * 100);
 }
 
-function buildTimeseries({ metric, range, bucket }) {
-  const days = resolveRange(range);
+export function buildTimeseries({ metric, range, bucket, data }) {
+  const days = resolveRange(range, undefined, undefined, data);
   if (bucket === "hour" && range === "today") {
     const base = days[0] ?? summarizeDays([], range);
     return {
@@ -154,8 +313,8 @@ function metricValue(metric, entry) {
   return entry.revenue;
 }
 
-function buildBreakdown({ metric, range, limit = 5 }) {
-  const days = resolveRange(range);
+export function buildBreakdown({ metric, range, limit = 5, data }) {
+  const days = resolveRange(range, undefined, undefined, data);
   const byKey = new Map();
 
   for (const day of days) {
@@ -180,8 +339,8 @@ function buildBreakdown({ metric, range, limit = 5 }) {
   };
 }
 
-function buildAnomalies({ metric, range }) {
-  const series = buildTimeseries({ metric, range, bucket: "day" }).points;
+function buildAnomalies({ metric, range, data }) {
+  const series = buildTimeseries({ metric, range, bucket: "day", data }).points;
   const values = series.map((point) => point.v);
   const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
   const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / Math.max(1, values.length);
@@ -264,21 +423,26 @@ function createTrendClip({ points, speed = 1, normalize = "minmax", durationMs =
   };
 }
 
-export async function runAgentTool(toolName, args) {
+export async function runAgentTool(toolName, args, context = {}) {
+  const dataset = await resolveDataset(context, args);
+
   switch (toolName) {
     case "metrics_summary":
       return {
         ok: true,
         tool: toolName,
         data: summarizeDays(
-          resolveRange(args.range ?? "today", args.start, args.end),
+          resolveRange(args.range ?? "today", args.start, args.end, dataset),
           args.range ?? "today",
         ),
       };
     case "metrics_compare": {
-      const base = summarizeDays(resolveRange(args.range ?? "today"), args.range ?? "today");
+      const base = summarizeDays(
+        resolveRange(args.range ?? "today", undefined, undefined, dataset),
+        args.range ?? "today",
+      );
       const compareTo = summarizeDays(
-        resolveRange(args.compare_to ?? "yesterday"),
+        resolveRange(args.compare_to ?? "yesterday", undefined, undefined, dataset),
         args.compare_to ?? "yesterday",
       );
 
@@ -300,6 +464,7 @@ export async function runAgentTool(toolName, args) {
           metric: args.metric ?? "revenue",
           range: args.range ?? "last_7d",
           bucket: args.bucket ?? "day",
+          data: dataset,
         }),
       };
     case "metrics_breakdown":
@@ -310,6 +475,7 @@ export async function runAgentTool(toolName, args) {
           metric: args.metric ?? "revenue",
           range: args.range ?? "today",
           limit: args.limit ?? 5,
+          data: dataset,
         }),
       };
     case "metrics_anomalies":
@@ -319,6 +485,7 @@ export async function runAgentTool(toolName, args) {
         data: buildAnomalies({
           metric: args.metric ?? "revenue",
           range: args.range ?? "last_30d",
+          data: dataset,
         }),
       };
     case "sonify_series":
