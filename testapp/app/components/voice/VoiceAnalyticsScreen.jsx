@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PushToTalkButton } from "./PushToTalkButton.jsx";
 import { TranscriptPanel } from "./TranscriptPanel.jsx";
 import { AgentResponsePanel } from "./AgentResponsePanel.jsx";
 import { PlaybackQueue } from "./PlaybackQueue.jsx";
 import { ListenModeToggle } from "./ListenModeToggle.jsx";
 import { SuggestedQuestions } from "./SuggestedQuestions.jsx";
+import { TimeSeriesSyncChart } from "./TimeSeriesSyncChart.jsx";
 import { useSpeechCapture } from "../../lib/voice/useSpeechCapture.js";
 import { usePlaybackQueue } from "../../lib/voice/usePlaybackQueue.js";
 import { useVoiceSession } from "../../lib/voice/useVoiceSession.js";
@@ -16,22 +17,48 @@ export function VoiceAnalyticsScreen({
   directAccessToken = "",
 }) {
   const [textInput, setTextInput] = useState("");
+  const [latestSeries, setLatestSeries] = useState(null);
+  const lastQueuedResponseKeyRef = useRef("");
   const session = useVoiceSession({ directAccessToken });
   const playback = usePlaybackQueue();
   const speech = useSpeechCapture({
     onFinalTranscript: (transcript) => {
-      session.submitUtterance(transcript, "speech");
+      submitPrompt(transcript, "speech");
     },
   });
 
-  useEffect(() => {
-    if (!session.latestResponse?.audio?.length) {
+  async function submitPrompt(prompt, source) {
+    const utterance = prompt.trim();
+    if (!utterance) {
       return;
     }
 
-    playback.enqueueResponseAudio(session.latestResponse.audio, session.playbackRate);
+    const response = await session.submitUtterance(utterance, source);
+    if (!response) {
+      return;
+    }
+
+    setLatestSeries(response?.chart?.series ?? null);
+  }
+
+  useEffect(() => {
+    const audioItems = session.latestResponse?.audio ?? [];
+    if (!audioItems.length) {
+      return;
+    }
+
+    const audioKey = audioItems
+      .map((item) => `${item.type}:${item.audio_url}`)
+      .join("|");
+    const responseKey = `${session.transcript}|${session.playbackRate}|${audioKey}`;
+    if (lastQueuedResponseKeyRef.current === responseKey) {
+      return;
+    }
+    lastQueuedResponseKeyRef.current = responseKey;
+
+    playback.enqueueResponseAudio(audioItems, session.playbackRate);
     playback.replay();
-  }, [playback, session.latestResponse, session.playbackRate]);
+  }, [playback, session.latestResponse, session.playbackRate, session.transcript]);
 
   const supportedQuestions = [
     "How are we doing today?",
@@ -48,12 +75,12 @@ export function VoiceAnalyticsScreen({
       return;
     }
 
-    await session.submitUtterance(utterance, "text");
+    await submitPrompt(utterance, "text");
     setTextInput("");
   }
 
   async function handleSuggestedQuestion(question) {
-    await session.submitUtterance(question, "suggested");
+    await submitPrompt(question, "suggested");
   }
 
   function handleRateChange(nextRate) {
@@ -209,6 +236,13 @@ export function VoiceAnalyticsScreen({
         onReplay={playback.replay}
         onStop={playback.stop}
         onRateChange={handleRateChange}
+      />
+
+      <TimeSeriesSyncChart
+        series={latestSeries}
+        activeProgress={playback.activeProgress}
+        isToolCalling={session.isLoading}
+        toolTrace={session.latestResponse?.tool_trace ?? []}
       />
     </div>
   );

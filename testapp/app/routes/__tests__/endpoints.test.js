@@ -25,9 +25,9 @@ function requestWithJson({ url = "https://example.com/api", method = "GET", body
 }
 
 test("api.agent.respond action handles invalid json and success", async () => {
-  const route = await importRoute("../api.agent.respond.js");
+  const { createAgentRespondAction } = await import(new URL("../../lib/agent/respondAction.server.js", import.meta.url));
   const calls = [];
-  const action = route.createAgentRespondAction({
+  const action = createAgentRespondAction({
     authenticateAdmin: async () => ({ session: { shop: "demo.myshopify.com", accessToken: "tok" } }),
     respond: async (input) => {
       calls.push(input);
