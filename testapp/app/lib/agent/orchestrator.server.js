@@ -13,6 +13,14 @@ function parseIntent(utterance) {
   if (text.includes("again slower") || (text.includes("slower") && text.includes("play"))) {
     return "replay_slower";
   }
+  if (
+    text.includes("echo") ||
+    text.includes("lag") ||
+    text.includes("dashboard") ||
+    (text.includes("traffic") && text.includes("revenue"))
+  ) {
+    return "echo";
+  }
   if (text.includes("compare") || text.includes("vs") || text.includes("versus")) {
     return "compare";
   }
@@ -32,6 +40,13 @@ function buildToolPlan(intent, memory, requestBody) {
   const tz = requestBody.context.tz || memory.tz;
 
   switch (intent) {
+    case "echo":
+      return [
+        {
+          tool: "sonify_dashboard",
+          args: { range, tz, duration_ms: 18000, ticks: true },
+        },
+      ];
     case "compare":
       return [
         {
@@ -196,6 +211,25 @@ function buildDeterministicResponse({ intent, memory, requestBody, results }) {
   const breakdown = results.get("metrics_breakdown");
   const listenMode = requestBody.context.listen_mode || memory.listen_mode;
   const metric = requestBody.overrides.metric ?? memory.last_metric;
+
+  if (intent === "echo") {
+    const dashboard = results.get("sonify_dashboard");
+    const lag = dashboard?.lag_days ?? 1;
+    return {
+      spoken: `Traffic vs revenue echo. Revenue arrives ${lag} day${lag !== 1 ? "s" : ""} later.`,
+      display: {
+        bullets: [
+          `LEFT = traffic`,
+          `RIGHT = revenue echo, delayed ${lag} day${lag !== 1 ? "s" : ""}`,
+          `Louder echo = higher conversion rate`,
+        ],
+        suggested_questions: [
+          "What caused the spike?",
+          "Show me the last 7 days trend",
+        ],
+      },
+    };
+  }
 
   if (intent === "replay_slower") {
     return {
@@ -404,8 +438,14 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
     text: conciseSpoken,
   });
 
-  const sonification = results.get("sonify_series");
+  // For the echo intent the Python popup owns all audio and visuals —
+  // only keep TTS so the web tab just speaks the intro and stops.
+  const sonification = intent === "echo"
+    ? null
+    : (results.get("sonify_series") ?? results.get("sonify_dashboard"));
   const timeseries = results.get("metrics_timeseries");
+  const dashboardResult = intent === "echo" ? null : results.get("sonify_dashboard");
+  const charts = dashboardResult?.chart_data ?? null;
 
   const nextSpeed = intent === "replay_slower"
     ? Math.max(0.6, (requestBody.overrides.sonify_speed ?? memory.sonify_speed) * 0.75)
@@ -434,5 +474,10 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
         refined: refinedWithBackboard,
       },
     },
+    ...(charts ? {
+      charts,
+      lag_days: dashboardResult.lag_days ?? 0,
+      audio_duration_ms: dashboardResult.meta?.duration_ms ?? 18000,
+    } : {}),
   };
 }

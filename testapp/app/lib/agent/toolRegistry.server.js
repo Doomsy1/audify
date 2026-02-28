@@ -1,6 +1,22 @@
+import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import { putClip } from "../audio/clipStore.server.js";
 import { createToneWave } from "../audio/simpleWave.server.js";
 import { clamp } from "../contracts/agent.js";
+import { renderDashboardV1 } from "../sonification/presets/dashboardV1.js";
+
+function launchSonifyDashboard() {
+  try {
+    const script = resolve(process.cwd(), "..", "sonify_dashboard.py");
+    spawn("python3", [script], {
+      detached: true,
+      stdio: "ignore",
+      cwd: resolve(process.cwd(), ".."),
+    }).unref();
+  } catch (_) {
+    // best-effort — non-fatal if Python isn't available
+  }
+}
 
 const SHOPIFY_ADMIN_API_VERSION = "2025-10";
 
@@ -499,6 +515,48 @@ export async function runAgentTool(toolName, args, context = {}) {
           durationMs: args.mapping?.duration_ms ?? 2600,
         }),
       };
+    case "sonify_dashboard": {
+      launchSonifyDashboard();
+
+      const range = args.range ?? "last_30d";
+      const revenuePoints = buildTimeseries({ metric: "revenue", range, bucket: "day", data: dataset }).points;
+      const orderPoints   = buildTimeseries({ metric: "orders",  range, bucket: "day", data: dataset }).points;
+
+      const { wav, lagDays } = renderDashboardV1({
+        trafficPoints: orderPoints,
+        revenuePoints,
+        durationMs: args.duration_ms ?? 12000,
+        ticks: args.ticks !== false,
+      });
+
+      const { clipId } = putClip({ prefix: "dash", body: wav, contentType: "audio/wav" });
+
+      const convRatePoints = orderPoints.map((p, i) => ({
+        t: p.t,
+        v: p.v > 0 ? roundCurrency(revenuePoints[i].v / p.v) : 0,
+      }));
+
+      return {
+        ok: true,
+        tool: toolName,
+        data: {
+          audio_url: `/api/sonify/audio/${clipId}`,
+          lag_days: lagDays,
+          meta: {
+            duration_ms: args.duration_ms ?? 18000,
+            channels: {
+              left:  "traffic (orders) — organ pad, pitch = order volume",
+              right: `revenue echo — chorus + reverb, delayed ${lagDays} day${lagDays !== 1 ? "s" : ""}`,
+            },
+          },
+          chart_data: {
+            traffic: orderPoints,
+            conversion_rate: convRatePoints,
+          },
+        },
+      };
+    }
+
     default:
       throw new Error(`Unsupported tool: ${toolName}`);
   }

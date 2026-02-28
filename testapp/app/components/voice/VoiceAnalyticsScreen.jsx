@@ -56,8 +56,7 @@ export function VoiceAnalyticsScreen({
     }
     lastQueuedResponseKeyRef.current = responseKey;
 
-    playback.enqueueResponseAudio(audioItems, session.playbackRate);
-    playback.replay();
+    playback.enqueueAndPlay(audioItems, session.playbackRate);
   }, [playback, session.latestResponse, session.playbackRate, session.transcript]);
 
   const supportedQuestions = [

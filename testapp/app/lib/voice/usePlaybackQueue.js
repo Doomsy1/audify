@@ -167,6 +167,19 @@ export function usePlaybackQueue() {
     return normalized;
   }, [playbackRate]);
 
+  // enqueueAndPlay avoids the stale-queue closure problem: it calls playQueueIndex
+  // directly with the fresh normalized array instead of reading queue state.
+  const enqueueAndPlay = useCallback((audioItems, rate = playbackRate) => {
+    const normalized = normalizeAudioQueue(audioItems, rate);
+    stop();
+    setQueue(normalized);
+    setActiveItemId("");
+    setError("");
+    if (normalized.length > 0) {
+      playQueueIndex(normalized, 0);
+    }
+  }, [playbackRate, playQueueIndex, stop]);
+
   const replay = useCallback(() => {
     if (!queue.length) {
       return;
@@ -222,6 +235,7 @@ export function usePlaybackQueue() {
     activeCurrentTime,
     activeDuration,
     enqueueResponseAudio,
+    enqueueAndPlay,
     replay,
     stop,
     setPlaybackRate,
