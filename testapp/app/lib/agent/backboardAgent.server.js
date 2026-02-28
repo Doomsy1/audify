@@ -1,4 +1,4 @@
-import { AGENT_RESPONSE_PROMPT } from "./prompt";
+import { AGENT_RESPONSE_PROMPT } from "./prompt.js";
 
 export function getBackboardSettings() {
   const url = process.env.BACKBOARD_API_URL;
@@ -13,7 +13,28 @@ export function getBackboardSettings() {
   };
 }
 
+function normalizeBaseUrl(url) {
+  if (!url) {
+    return "";
+  }
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+export function resolveBackboardProvider(modelName) {
+  if (!modelName || typeof modelName !== "string") {
+    return null;
+  }
+  const model = modelName.toLowerCase();
+  if (model.startsWith("claude")) return "anthropic";
+  if (model.startsWith("gpt") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) {
+    return "openai";
+  }
+  if (model.startsWith("gemini")) return "google";
+  return null;
+}
+
 function extractTextPayload(payload) {
+  if (typeof payload === "string") return payload;
   if (!payload) return "";
   if (typeof payload.output_text === "string") return payload.output_text;
   if (Array.isArray(payload.output_text)) return payload.output_text.join("");
@@ -47,6 +68,39 @@ function parseJsonResponse(text) {
   return JSON.parse(cleaned);
 }
 
+async function parseErrorBody(response) {
+  try {
+    const text = await response.text();
+    if (!text) return "";
+    return text.slice(0, 200);
+  } catch {
+    return "";
+  }
+}
+
+async function requestBackboardJson({ url, apiKey, payload }) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await parseErrorBody(response);
+    const suffix = body ? `: ${body}` : "";
+    throw new Error(`Backboard request failed (${response.status})${suffix}`);
+  }
+
+  return response.json();
+}
+
+function buildBackboardPrompt(input) {
+  return `${AGENT_RESPONSE_PROMPT}\n\nInput JSON:\n${JSON.stringify(input)}`;
+}
+
 export async function maybeRefineAgentResponse(input) {
   const { url, apiKey, model, configured } = getBackboardSettings();
 
@@ -54,36 +108,42 @@ export async function maybeRefineAgentResponse(input) {
     return null;
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+  const baseUrl = normalizeBaseUrl(url);
+  const assistant = await requestBackboardJson({
+    url: `${baseUrl}/assistants`,
+    apiKey,
+    payload: {
+      name: "Audify Response Refiner",
+      system_prompt: "You improve assistant responses for analytics clarity.",
     },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: "system",
-          content: [{ type: "input_text", text: AGENT_RESPONSE_PROMPT }],
-        },
-        {
-          role: "user",
-          content: [{ type: "input_text", text: JSON.stringify(input) }],
-        },
-      ],
-      text: {
-        format: { type: "json_object" },
-      },
-    }),
   });
-
-  if (!response.ok) {
-    throw new Error(`Backboard request failed (${response.status})`);
+  const assistantId = assistant?.assistant_id ?? assistant?.id;
+  if (!assistantId) {
+    throw new Error("Backboard assistant response missing assistant identifier");
   }
 
-  const payload = await response.json();
-  const text = extractTextPayload(payload);
+  const thread = await requestBackboardJson({
+    url: `${baseUrl}/assistants/${assistantId}/threads`,
+    apiKey,
+    payload: {},
+  });
+
+  const provider = resolveBackboardProvider(model);
+  const message = await requestBackboardJson({
+    url: `${baseUrl}/threads/${thread.thread_id}/messages`,
+    apiKey,
+    payload: {
+      content: buildBackboardPrompt(input),
+      model_name: model,
+      ...(provider ? { llm_provider: provider } : {}),
+      stream: false,
+      memory: "off",
+      web_search: "off",
+      send_to_llm: "true",
+    },
+  });
+
+  const text = extractTextPayload(message?.content ?? message);
   if (!text) return null;
 
   return parseJsonResponse(text);
