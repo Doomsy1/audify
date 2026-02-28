@@ -20,6 +20,7 @@ export default function App() {
         <s-link href="/app/voice">Voice Test</s-link>
         <s-link href="/app/additional">Additional page</s-link>
         <s-link href="/app/sonify">Sonify</s-link>
+        <s-link href="/app/voice">Voice Analytics</s-link>
         <s-link href="/app/seed">Seed Data</s-link>
       </s-app-nav>
       <Outlet />

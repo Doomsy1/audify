@@ -126,7 +126,7 @@ function parseJsonResponse(text) {
 export async function generateBackboardAudioPlan(features) {
   const url = process.env.BACKBOARD_API_URL;
   const apiKey = process.env.BACKBOARD_API_KEY;
-  const model = process.env.BACKBOARD_MODEL || "gpt-4.1-mini";
+  const model = process.env.BACKBOARD_MODEL || "claude-sonnet-4-6";
 
   if (!url || !apiKey) {
     throw new Error("Backboard is not configured");
