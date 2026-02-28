@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authenticate } from "../shopify.server";
 import { PushToTalkButton } from "../components/voice/PushToTalkButton.jsx";
 import { TranscriptPanel } from "../components/voice/TranscriptPanel.jsx";
@@ -17,8 +17,10 @@ export const loader = async ({ request }) => {
 
 export default function VoiceAnalyticsRoute() {
   const [textInput, setTextInput] = useState("");
+  const lastQueuedResponseKeyRef = useRef("");
   const session = useVoiceSession();
   const playback = usePlaybackQueue();
+  const { enqueueResponseAudio, replay } = playback;
   const speech = useSpeechCapture({
     onFinalTranscript: (transcript) => {
       session.submitUtterance(transcript, "speech");
@@ -26,13 +28,30 @@ export default function VoiceAnalyticsRoute() {
   });
 
   useEffect(() => {
-    if (!session.latestResponse?.audio?.length) {
+    const audioItems = session.latestResponse?.audio ?? [];
+    if (!audioItems.length) {
       return;
     }
 
-    playback.enqueueResponseAudio(session.latestResponse.audio, session.playbackRate);
-    playback.replay();
-  }, [playback, session.latestResponse, session.playbackRate]);
+    const audioKey = audioItems
+      .map((item) => `${item.type}:${item.audio_url}`)
+      .join("|");
+    const responseKey = `${session.transcript}|${session.playbackRate}|${audioKey}`;
+
+    if (lastQueuedResponseKeyRef.current === responseKey) {
+      return;
+    }
+    lastQueuedResponseKeyRef.current = responseKey;
+
+    enqueueResponseAudio(audioItems, session.playbackRate);
+    replay();
+  }, [
+    enqueueResponseAudio,
+    replay,
+    session.latestResponse,
+    session.playbackRate,
+    session.transcript,
+  ]);
 
   const supportedQuestions = [
     "How are we doing today?",
