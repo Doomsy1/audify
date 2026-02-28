@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   normalizeAudioQueue,
   applyPlaybackRateToQueue,
+  computeVisualProgress,
 } from "../usePlaybackQueue.js";
 
 test("normalizeAudioQueue keeps tts before sonification regardless of input order", () => {
@@ -52,4 +53,40 @@ test("applyPlaybackRateToQueue clamps invalid values to defaults", () => {
   const updated = applyPlaybackRateToQueue(queue, Number.NaN);
 
   assert.equal(updated[0].playback_rate, 1);
+});
+
+test("computeVisualProgress tracks sonification progress and ignores tts segments", () => {
+  const queue = [
+    { id: "a", type: "tts", status: "playing" },
+    { id: "b", type: "sonification", status: "queued" },
+    { id: "c", type: "sonification", status: "queued" },
+  ];
+  assert.equal(
+    computeVisualProgress({ queue, activeItemId: "a", activeProgress: 0.6 }),
+    0,
+  );
+
+  const queueWithFirstSonicPlaying = [
+    { id: "a", type: "tts", status: "played" },
+    { id: "b", type: "sonification", status: "playing" },
+    { id: "c", type: "sonification", status: "queued" },
+  ];
+  assert.equal(
+    computeVisualProgress({
+      queue: queueWithFirstSonicPlaying,
+      activeItemId: "b",
+      activeProgress: 0.5,
+    }),
+    0.25,
+  );
+
+  const finishedQueue = [
+    { id: "a", type: "tts", status: "played" },
+    { id: "b", type: "sonification", status: "played" },
+    { id: "c", type: "sonification", status: "played" },
+  ];
+  assert.equal(
+    computeVisualProgress({ queue: finishedQueue, activeItemId: "", activeProgress: 0 }),
+    1,
+  );
 });

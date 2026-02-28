@@ -1,7 +1,10 @@
 /* eslint-disable react/prop-types */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { compactSeriesValues } from "../../lib/voice/timeseriesChart.js";
 
-const TOTAL = 180;
+const RAW_TOTAL = 180;
+const COMPACT_FACTOR = 6;
+const TOTAL = Math.round(RAW_TOTAL / COMPACT_FACTOR);
 const CW = 680;
 const PAD = { t: 10, b: 10, l: 4, r: 4 };
 const INNER_W = CW - PAD.l - PAD.r;
@@ -29,24 +32,27 @@ function normalSample(rand, std = 3) {
 
 function generateFallbackData() {
   const rand = mulberry32(42);
-  const x = new Array(TOTAL);
-  const y = new Array(TOTAL);
-  for (let t = 0; t < TOTAL; t += 1) {
+  const rawX = new Array(RAW_TOTAL);
+  const rawY = new Array(RAW_TOTAL);
+  for (let t = 0; t < RAW_TOTAL; t += 1) {
     if (t < 60) {
-      x[t] = 100 + 20 * Math.sin((2 * Math.PI * t) / 14);
-      y[t] = 0.08 * x[t] + normalSample(rand, 1);
+      rawX[t] = 100 + 20 * Math.sin((2 * Math.PI * t) / 14);
+      rawY[t] = 0.08 * rawX[t] + normalSample(rand, 1);
     } else if (t < 90) {
-      x[t] = 250 + 30 * Math.sin((2 * Math.PI * t) / 7);
-      y[t] = 0.08 * 100 + normalSample(rand, 2);
+      rawX[t] = 250 + 30 * Math.sin((2 * Math.PI * t) / 7);
+      rawY[t] = 0.08 * 100 + normalSample(rand, 2);
     } else if (t < 130) {
-      x[t] = 120 + 25 * Math.sin((2 * Math.PI * t) / 14);
-      y[t] = 0.08 * (t >= 3 ? x[t - 3] : x[0]) + normalSample(rand, 1.5);
+      rawX[t] = 120 + 25 * Math.sin((2 * Math.PI * t) / 14);
+      rawY[t] = 0.08 * (t >= 3 ? rawX[t - 3] : rawX[0]) + normalSample(rand, 1.5);
     } else {
-      x[t] = 110 + 15 * Math.sin((2 * Math.PI * t) / 14);
-      y[t] = 0.03 * x[t] + normalSample(rand, 1);
+      rawX[t] = 110 + 15 * Math.sin((2 * Math.PI * t) / 14);
+      rawY[t] = 0.03 * rawX[t] + normalSample(rand, 1);
     }
   }
-  return { x, y };
+  return {
+    x: compactSeriesValues(rawX, COMPACT_FACTOR),
+    y: compactSeriesValues(rawY, COMPACT_FACTOR),
+  };
 }
 
 function smoothSeries(values, radius = 2) {
@@ -70,16 +76,17 @@ function buildAgentData(series) {
   }
 
   const values = points.map((point) => Number(point?.v ?? 0));
-  const x = new Array(TOTAL).fill(values[0] ?? 0);
-  for (let i = 0; i < TOTAL; i += 1) {
-    const sourcePos = (i / Math.max(1, TOTAL - 1)) * Math.max(1, values.length - 1);
+  const rawX = new Array(RAW_TOTAL).fill(values[0] ?? 0);
+  for (let i = 0; i < RAW_TOTAL; i += 1) {
+    const sourcePos = (i / Math.max(1, RAW_TOTAL - 1)) * Math.max(1, values.length - 1);
     const left = Math.floor(sourcePos);
     const right = Math.min(values.length - 1, Math.ceil(sourcePos));
     const t = sourcePos - left;
     const leftValue = values[left] ?? 0;
     const rightValue = values[right] ?? leftValue;
-    x[i] = leftValue + (rightValue - leftValue) * t;
+    rawX[i] = leftValue + (rightValue - leftValue) * t;
   }
+  const x = compactSeriesValues(rawX, COMPACT_FACTOR);
   const y = smoothSeries(x, 2);
   return { x, y };
 }
@@ -579,7 +586,7 @@ export function TimeSeriesSyncChart({ series, activeProgress, isToolCalling, too
         Time Series
       </h3>
       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#637381" }}>
-        Legacy sonify graph behavior with agent data and tool-call markers.
+        Legacy sonify graph behavior with agent data in 4-hour buckets.
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>

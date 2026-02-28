@@ -7,6 +7,24 @@ function clamp01(value) {
   return Math.max(0, Math.min(1, toNumber(value)));
 }
 
+export function compactSeriesValues(values = [], factor = 1) {
+  if (!Array.isArray(values) || !values.length) {
+    return [];
+  }
+  const safeFactor = Math.max(1, Math.floor(toNumber(factor) || 1));
+  if (safeFactor === 1) {
+    return values.map((value) => toNumber(value));
+  }
+
+  const compacted = [];
+  for (let i = 0; i < values.length; i += safeFactor) {
+    const chunk = values.slice(i, i + safeFactor).map((value) => toNumber(value));
+    const sum = chunk.reduce((total, value) => total + value, 0);
+    compacted.push(sum / Math.max(1, chunk.length));
+  }
+  return compacted;
+}
+
 export function normalizeSeriesPoints(points = []) {
   if (!Array.isArray(points) || !points.length) {
     return [];

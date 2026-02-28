@@ -44,6 +44,27 @@ export function applyPlaybackRateToQueue(queue, playbackRate) {
   }));
 }
 
+export function computeVisualProgress({
+  queue = [],
+  activeItemId = "",
+  activeProgress = 0,
+}) {
+  const sonificationItems = queue.filter((item) => item.type === "sonification");
+  if (!sonificationItems.length) {
+    return Math.max(0, Math.min(1, Number(activeProgress) || 0));
+  }
+
+  const total = sonificationItems.length;
+  const playedCount = sonificationItems.filter((item) => item.status === "played").length;
+  const activeIndex = sonificationItems.findIndex((item) => item.id === activeItemId);
+  if (activeIndex >= 0) {
+    const stableProgress = Math.max(0, Math.min(1, Number(activeProgress) || 0));
+    return Math.max(0, Math.min(1, (playedCount + stableProgress) / total));
+  }
+
+  return Math.max(0, Math.min(1, playedCount / total));
+}
+
 export function usePlaybackQueue() {
   const [queue, setQueue] = useState([]);
   const [activeItemId, setActiveItemId] = useState("");
@@ -181,6 +202,14 @@ export function usePlaybackQueue() {
     return "No audio queued";
   }, [error, isPlaying, queue.length]);
 
+  const visualProgress = useMemo(() => (
+    computeVisualProgress({
+      queue,
+      activeItemId,
+      activeProgress,
+    })
+  ), [activeItemId, activeProgress, queue]);
+
   return {
     queue,
     activeItemId,
@@ -189,6 +218,7 @@ export function usePlaybackQueue() {
     error,
     statusLabel,
     activeProgress,
+    visualProgress,
     activeCurrentTime,
     activeDuration,
     enqueueResponseAudio,

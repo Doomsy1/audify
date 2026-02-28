@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  compactSeriesValues,
   normalizeSeriesPoints,
   resolvePlayheadIndex,
 } from "../timeseriesChart.js";
@@ -24,4 +25,9 @@ test("resolvePlayheadIndex maps progress to nearest point", () => {
   assert.equal(resolvePlayheadIndex(10, 0), 0);
   assert.equal(resolvePlayheadIndex(10, 0.5), 5);
   assert.equal(resolvePlayheadIndex(10, 1), 9);
+});
+
+test("compactSeriesValues averages values per factor bucket", () => {
+  const compacted = compactSeriesValues([1, 2, 3, 4, 5, 6], 3);
+  assert.deepEqual(compacted, [2, 5]);
 });

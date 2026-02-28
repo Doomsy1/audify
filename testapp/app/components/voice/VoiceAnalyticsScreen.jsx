@@ -240,7 +240,7 @@ export function VoiceAnalyticsScreen({
 
       <TimeSeriesSyncChart
         series={latestSeries}
-        activeProgress={playback.activeProgress}
+        activeProgress={playback.visualProgress}
         isToolCalling={session.isLoading}
         toolTrace={session.latestResponse?.tool_trace ?? []}
       />
