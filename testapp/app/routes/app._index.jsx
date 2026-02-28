@@ -1,331 +1,278 @@
-import { useEffect } from "react";
-import { useFetcher } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { boundary } from "@shopify/shopify-app-react-router/server";
+import { useEffect, useRef, useState } from "react";
 import { authenticate } from "../shopify.server";
+import { PushToTalkButton } from "../components/voice/PushToTalkButton.jsx";
+import { TranscriptPanel } from "../components/voice/TranscriptPanel.jsx";
+import { AgentResponsePanel } from "../components/voice/AgentResponsePanel.jsx";
+import { PlaybackQueue } from "../components/voice/PlaybackQueue.jsx";
+import { ListenModeToggle } from "../components/voice/ListenModeToggle.jsx";
+import { SuggestedQuestions } from "../components/voice/SuggestedQuestions.jsx";
+import { ToolTraceGraph } from "../components/voice/ToolTraceGraph.jsx";
+import { useSpeechCapture } from "../lib/voice/useSpeechCapture.js";
+import { usePlaybackQueue } from "../lib/voice/usePlaybackQueue.js";
+import { useVoiceSession } from "../lib/voice/useVoiceSession.js";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
-
   return null;
 };
 
-export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-            demoInfo: metafield(namespace: "$app", key: "demo_info") {
-              jsonValue
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-          metafields: [
-            {
-              namespace: "$app",
-              key: "demo_info",
-              value: "Created by React Router Template",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-  const product = responseJson.data.productCreate.product;
-  const variantId = product.variants.edges[0].node.id;
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-  const variantResponseJson = await variantResponse.json();
-  const metaobjectResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpsertMetaobject($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
-      metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
-        metaobject {
-          id
-          handle
-          title: field(key: "title") {
-            jsonValue
-          }
-          description: field(key: "description") {
-            jsonValue
-          }
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      variables: {
-        handle: {
-          type: "$app:example",
-          handle: "demo-entry",
-        },
-        metaobject: {
-          fields: [
-            { key: "title", value: "Demo Entry" },
-            {
-              key: "description",
-              value:
-                "This metaobject was created by the Shopify app template to demonstrate the metaobject API.",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const metaobjectResponseJson = await metaobjectResponse.json();
+function createInteractionId() {
+  return `interaction_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
 
-  return {
-    product: responseJson.data.productCreate.product,
-    variant: variantResponseJson.data.productVariantsBulkUpdate.productVariants,
-    metaobject: metaobjectResponseJson.data.metaobjectUpsert.metaobject,
-  };
-};
+export default function UnifiedAssistantRoute() {
+  const [textInput, setTextInput] = useState("");
+  const [interactionHistory, setInteractionHistory] = useState([]);
+  const lastQueuedResponseKeyRef = useRef("");
+  const session = useVoiceSession();
+  const playback = usePlaybackQueue();
+  const { enqueueResponseAudio, replay } = playback;
 
-export default function Index() {
-  const fetcher = useFetcher();
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+  async function submitPrompt(prompt, source) {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const response = await session.submitUtterance(trimmed, source);
+    if (!response) {
+      return;
+    }
+
+    setInteractionHistory((previous) => [
+      ...previous.slice(-7),
+      {
+        id: createInteractionId(),
+        prompt: trimmed,
+        source,
+        tool_trace: response.tool_trace ?? [],
+      },
+    ]);
+  }
+
+  const speech = useSpeechCapture({
+    onFinalTranscript: (transcript) => {
+      submitPrompt(transcript, "speech");
+    },
+  });
 
   useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
+    const audioItems = session.latestResponse?.audio ?? [];
+    if (!audioItems.length) {
+      return;
     }
-  }, [fetcher.data?.product?.id, shopify]);
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+
+    const audioKey = audioItems
+      .map((item) => `${item.type}:${item.audio_url}`)
+      .join("|");
+    const responseKey = `${session.transcript}|${session.playbackRate}|${audioKey}`;
+
+    if (lastQueuedResponseKeyRef.current === responseKey) {
+      return;
+    }
+    lastQueuedResponseKeyRef.current = responseKey;
+
+    enqueueResponseAudio(audioItems, session.playbackRate);
+    replay();
+  }, [
+    enqueueResponseAudio,
+    replay,
+    session.latestResponse,
+    session.playbackRate,
+    session.transcript,
+  ]);
+
+  const starterQuestions = [
+    "How are we doing today?",
+    "What changed versus yesterday?",
+    "Show me this week's trend",
+    "Play that trend again slower",
+    "What caused the spike?",
+  ];
+
+  async function handleTextSubmit(event) {
+    event.preventDefault();
+    const prompt = textInput.trim();
+    if (!prompt) {
+      return;
+    }
+
+    await submitPrompt(prompt, "text");
+    setTextInput("");
+  }
+
+  async function handleQuestionClick(question) {
+    await submitPrompt(question, "suggested");
+  }
+
+  function handleRateChange(nextRate) {
+    session.setPlaybackRate(nextRate);
+    playback.setPlaybackRate(nextRate);
+  }
+
+  const backboardStatus = session.latestResponse?.meta?.backboard;
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
-      </s-button>
+    <s-page heading="Analytics Assistant">
+      <s-section>
+        <div
+          style={{
+            "--ui-bg": "#f4f7fb",
+            "--ui-surface": "#ffffff",
+            "--ui-border": "#dfe3e8",
+            "--ui-primary": "#1f6feb",
+            "--ui-accent": "#0e8a5f",
+            display: "grid",
+            gap: 16,
+            maxWidth: 980,
+            padding: 6,
+            background: "radial-gradient(circle at top right, #e8f0ff 0%, transparent 45%)",
+          }}
+        >
+          <p style={{ margin: 0, color: "#52606d", fontSize: 13 }}>
+            Ask questions by voice or text. Tool calls, response playback, and trend output stay together on one page.
+          </p>
 
-      <s-section heading="Congrats on creating a new Shopify app 🎉">
-        <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
+          <section
+            aria-label="Ask the assistant"
+            style={{
+              border: "1px solid var(--ui-border)",
+              borderRadius: 8,
+              padding: 12,
+              background: "var(--ui-surface)",
+              display: "grid",
+              gap: 10,
+            }}
           >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-          <s-link href="/app/additional">additional page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
-        </s-paragraph>
-      </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references. Includes a product{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metafields"
-            target="_blank"
-          >
-            metafield
-          </s-link>{" "}
-          and{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metaobjects"
-            target="_blank"
-          >
-            metaobject
-          </s-link>
-          .
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
-          </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
-          )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <PushToTalkButton
+                speechRecognitionSupported={speech.speechRecognitionSupported}
+                isRecording={speech.isRecording}
+                disabled={session.isLoading}
+                onPressStart={speech.start}
+                onPressEnd={speech.stop}
+              />
+              <ListenModeToggle enabled={session.listenMode} onChange={session.setListenMode} />
+            </div>
+
+            <form onSubmit={handleTextSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <label htmlFor="agent-prompt" style={{ display: "none" }}>
+                Ask the analytics assistant
+              </label>
+              <input
+                id="agent-prompt"
+                type="text"
+                value={textInput}
+                onChange={(event) => setTextInput(event.target.value)}
+                placeholder={speech.speechRecognitionSupported ? "Type a fallback question" : "Type your question"}
+                style={{
+                  flex: "1 1 380px",
+                  border: "1px solid var(--ui-border)",
+                  borderRadius: 6,
+                  padding: "10px 12px",
+                  fontSize: 14,
+                }}
+              />
+              <button
+                type="submit"
+                disabled={session.isLoading}
+                style={{
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "10px 14px",
+                  background: "var(--ui-primary)",
+                  color: "#fff",
+                  cursor: session.isLoading ? "not-allowed" : "pointer",
+                  fontWeight: 600,
+                }}
               >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
+                {session.isLoading ? "Sending..." : "Send"}
+              </button>
+            </form>
 
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {starterQuestions.map((question) => (
+                <button
+                  key={question}
+                  type="button"
+                  disabled={session.isLoading}
+                  onClick={() => handleQuestionClick(question)}
+                  style={{
+                    border: "1px solid var(--ui-border)",
+                    borderRadius: 999,
+                    padding: "6px 10px",
+                    background: "#fff",
+                    fontSize: 12,
+                    cursor: session.isLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {question}
+                </button>
+              ))}
+            </div>
 
-              <s-heading>metaobjectUpsert mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>
-                    {JSON.stringify(fetcher.data.metaobject, null, 2)}
-                  </code>
-                </pre>
-              </s-box>
-            </s-stack>
-          </s-section>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
-          >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Custom data: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data"
-            target="_blank"
-          >
-            Metafields &amp; metaobjects
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
-        <s-unordered-list>
-          <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
+            <p
+              role="status"
+              aria-live="polite"
+              style={{ margin: 0, color: session.error ? "#a0321c" : "#52606d", fontSize: 12 }}
             >
-              example app
-            </s-link>
-          </s-list-item>
-          <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
-          </s-list-item>
-        </s-unordered-list>
+              {session.error
+                ? session.error
+                : session.isLoading
+                  ? "Assistant is responding..."
+                  : "Ready for your next question."}
+            </p>
+          </section>
+
+          <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+            <TranscriptPanel
+              transcript={session.transcript || speech.finalTranscript}
+              interimTranscript={speech.interimTranscript}
+              source={session.transcriptSource}
+            />
+            <AgentResponsePanel response={session.latestResponse} />
+          </div>
+
+          <PlaybackQueue
+            queue={playback.queue}
+            activeItemId={playback.activeItemId}
+            playbackRate={playback.playbackRate}
+            statusLabel={playback.statusLabel}
+            onReplay={playback.replay}
+            onStop={playback.stop}
+            onRateChange={handleRateChange}
+          />
+
+          <SuggestedQuestions
+            questions={session.latestResponse?.display?.suggested_questions}
+            disabled={session.isLoading}
+            onSelect={handleQuestionClick}
+          />
+
+          <section
+            aria-labelledby="backboard-status-heading"
+            style={{
+              border: "1px solid var(--ui-border)",
+              borderRadius: 8,
+              padding: 12,
+              background: "var(--ui-surface)",
+            }}
+          >
+            <h3 id="backboard-status-heading" style={{ margin: "0 0 6px", fontSize: 15 }}>
+              Backboard Status
+            </h3>
+            <p style={{ margin: 0, fontSize: 13, color: "#52606d" }}>
+              {backboardStatus?.attempted
+                ? (backboardStatus.refined
+                  ? "Backboard refined the latest assistant response."
+                  : "Backboard was called but the deterministic fallback response was used.")
+                : "Backboard is not configured. The deterministic assistant response is active."}
+            </p>
+          </section>
+
+          <ToolTraceGraph history={interactionHistory} />
+        </div>
       </s-section>
     </s-page>
   );
 }
-
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};

@@ -26,6 +26,7 @@
  * }} [display]
  * @property {ClientVoiceAudioItem[]} [audio]
  * @property {Array<{tool: string, args: Record<string, unknown>, status: string}>} [tool_trace]
+ * @property {{ backboard?: { attempted: boolean, refined: boolean } }} [meta]
  */
 
 export const VOICE_RESPONSE_ENDPOINT = "/api/agent/respond";

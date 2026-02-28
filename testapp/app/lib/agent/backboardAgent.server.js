@@ -1,5 +1,18 @@
 import { AGENT_RESPONSE_PROMPT } from "./prompt";
 
+export function getBackboardSettings() {
+  const url = process.env.BACKBOARD_API_URL;
+  const apiKey = process.env.BACKBOARD_API_KEY;
+  const model = process.env.BACKBOARD_MODEL || "gpt-4.1-mini";
+
+  return {
+    url,
+    apiKey,
+    model,
+    configured: Boolean(url && apiKey),
+  };
+}
+
 function extractTextPayload(payload) {
   if (!payload) return "";
   if (typeof payload.output_text === "string") return payload.output_text;
@@ -35,11 +48,9 @@ function parseJsonResponse(text) {
 }
 
 export async function maybeRefineAgentResponse(input) {
-  const url = process.env.BACKBOARD_API_URL;
-  const apiKey = process.env.BACKBOARD_API_KEY;
-  const model = process.env.BACKBOARD_MODEL || "gpt-4.1-mini";
+  const { url, apiKey, model, configured } = getBackboardSettings();
 
-  if (!url || !apiKey) {
+  if (!configured) {
     return null;
   }
 
