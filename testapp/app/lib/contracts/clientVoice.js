@@ -25,6 +25,7 @@
  *   suggested_questions?: string[],
  * }} [display]
  * @property {ClientVoiceAudioItem[]} [audio]
+ * @property {{ series?: { points?: Array<{t: string, v: number}> } | null }} [chart]
  * @property {Array<{tool: string, args: Record<string, unknown>, status: string}>} [tool_trace]
  * @property {{ backboard?: { attempted: boolean, refined: boolean } }} [meta]
  */

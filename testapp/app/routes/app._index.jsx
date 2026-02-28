@@ -6,7 +6,7 @@ import { AgentResponsePanel } from "../components/voice/AgentResponsePanel.jsx";
 import { PlaybackQueue } from "../components/voice/PlaybackQueue.jsx";
 import { ListenModeToggle } from "../components/voice/ListenModeToggle.jsx";
 import { SuggestedQuestions } from "../components/voice/SuggestedQuestions.jsx";
-import { ToolTraceGraph } from "../components/voice/ToolTraceGraph.jsx";
+import { TimeSeriesSyncChart } from "../components/voice/TimeSeriesSyncChart.jsx";
 import { useSpeechCapture } from "../lib/voice/useSpeechCapture.js";
 import { usePlaybackQueue } from "../lib/voice/usePlaybackQueue.js";
 import { useVoiceSession } from "../lib/voice/useVoiceSession.js";
@@ -16,13 +16,9 @@ export const loader = async ({ request }) => {
   return null;
 };
 
-function createInteractionId() {
-  return `interaction_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
-
 export default function UnifiedAssistantRoute() {
   const [textInput, setTextInput] = useState("");
-  const [interactionHistory, setInteractionHistory] = useState([]);
+  const [latestSeries, setLatestSeries] = useState(null);
   const lastQueuedResponseKeyRef = useRef("");
   const session = useVoiceSession();
   const playback = usePlaybackQueue();
@@ -38,16 +34,7 @@ export default function UnifiedAssistantRoute() {
     if (!response) {
       return;
     }
-
-    setInteractionHistory((previous) => [
-      ...previous.slice(-7),
-      {
-        id: createInteractionId(),
-        prompt: trimmed,
-        source,
-        tool_trace: response.tool_trace ?? [],
-      },
-    ]);
+    setLatestSeries(response?.chart?.series ?? null);
   }
 
   const speech = useSpeechCapture({
@@ -110,10 +97,8 @@ export default function UnifiedAssistantRoute() {
     playback.setPlaybackRate(nextRate);
   }
 
-  const backboardStatus = session.latestResponse?.meta?.backboard;
-
   return (
-    <s-page heading="Analytics Assistant">
+    <s-page heading="Sonify">
       <s-section>
         <div
           style={{
@@ -157,7 +142,7 @@ export default function UnifiedAssistantRoute() {
 
             <form onSubmit={handleTextSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <label htmlFor="agent-prompt" style={{ display: "none" }}>
-                Ask the analytics assistant
+                Ask the sonify assistant
               </label>
               <input
                 id="agent-prompt"
@@ -243,34 +228,18 @@ export default function UnifiedAssistantRoute() {
             onRateChange={handleRateChange}
           />
 
+          <TimeSeriesSyncChart
+            series={latestSeries}
+            activeProgress={playback.activeProgress}
+            isToolCalling={session.isLoading}
+            toolTrace={session.latestResponse?.tool_trace ?? []}
+          />
+
           <SuggestedQuestions
             questions={session.latestResponse?.display?.suggested_questions}
             disabled={session.isLoading}
             onSelect={handleQuestionClick}
           />
-
-          <section
-            aria-labelledby="backboard-status-heading"
-            style={{
-              border: "1px solid var(--ui-border)",
-              borderRadius: 8,
-              padding: 12,
-              background: "var(--ui-surface)",
-            }}
-          >
-            <h3 id="backboard-status-heading" style={{ margin: "0 0 6px", fontSize: 15 }}>
-              Backboard Status
-            </h3>
-            <p style={{ margin: 0, fontSize: 13, color: "#52606d" }}>
-              {backboardStatus?.attempted
-                ? (backboardStatus.refined
-                  ? "Backboard refined the latest assistant response."
-                  : "Backboard was called but the deterministic fallback response was used.")
-                : "Backboard is not configured. The deterministic assistant response is active."}
-            </p>
-          </section>
-
-          <ToolTraceGraph history={interactionHistory} />
         </div>
       </s-section>
     </s-page>

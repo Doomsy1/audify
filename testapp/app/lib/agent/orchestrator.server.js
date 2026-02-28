@@ -325,6 +325,19 @@ function sanitizeRefinedResponse(refined, fallback) {
   };
 }
 
+function shortenSpokenResponse(spoken, maxWords = 22) {
+  if (!spoken || typeof spoken !== "string") {
+    return "";
+  }
+
+  const words = spoken.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) {
+    return spoken.trim();
+  }
+
+  return `${words.slice(0, maxWords).join(" ")}...`;
+}
+
 function buildAudioArray(ttsClip, sonification) {
   const audio = [];
 
@@ -384,11 +397,15 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
     displayPayload = fallbackResponse;
   }
 
+  const maxSpokenWords = (requestBody.context.listen_mode || memory.listen_mode) ? 12 : 22;
+  const conciseSpoken = shortenSpokenResponse(displayPayload.spoken, maxSpokenWords);
+
   const ttsClip = await synthesizeSpeechClip({
-    text: displayPayload.spoken,
+    text: conciseSpoken,
   });
 
   const sonification = results.get("sonify_series");
+  const timeseries = results.get("metrics_timeseries");
 
   const nextSpeed = intent === "replay_slower"
     ? Math.max(0.6, (requestBody.overrides.sonify_speed ?? memory.sonify_speed) * 0.75)
@@ -404,9 +421,12 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
   });
 
   return {
-    spoken: displayPayload.spoken,
+    spoken: conciseSpoken,
     display: displayPayload.display,
     audio: buildAudioArray(ttsClip, sonification),
+    chart: {
+      series: timeseries ?? null,
+    },
     tool_trace: toolTrace,
     meta: {
       backboard: {

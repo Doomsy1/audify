@@ -50,6 +50,9 @@ export function usePlaybackQueue() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const [error, setError] = useState("");
+  const [activeProgress, setActiveProgress] = useState(0);
+  const [activeCurrentTime, setActiveCurrentTime] = useState(0);
+  const [activeDuration, setActiveDuration] = useState(0);
   const audioRef = useRef(null);
 
   const stop = useCallback(() => {
@@ -59,6 +62,9 @@ export function usePlaybackQueue() {
       audioRef.current = null;
     }
     setIsPlaying(false);
+    setActiveProgress(0);
+    setActiveCurrentTime(0);
+    setActiveDuration(0);
   }, []);
 
   const playQueueIndex = useCallback((queueItems, index) => {
@@ -74,6 +80,9 @@ export function usePlaybackQueue() {
     audioRef.current = audio;
     setIsPlaying(true);
     setActiveItemId(currentItem.id);
+    setActiveProgress(0);
+    setActiveCurrentTime(0);
+    setActiveDuration(0);
     setQueue((prevQueue) =>
       prevQueue.map((item) => ({
         ...item,
@@ -86,6 +95,20 @@ export function usePlaybackQueue() {
       })),
     );
 
+    audio.onloadedmetadata = () => {
+      if (Number.isFinite(audio.duration)) {
+        setActiveDuration(audio.duration);
+      }
+    };
+
+    audio.ontimeupdate = () => {
+      const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+      const progress = duration ? Math.max(0, Math.min(1, audio.currentTime / duration)) : 0;
+      setActiveCurrentTime(audio.currentTime || 0);
+      setActiveDuration(duration);
+      setActiveProgress(progress);
+    };
+
     audio.onended = () => {
       setQueue((prevQueue) =>
         prevQueue.map((item) => ({
@@ -93,6 +116,7 @@ export function usePlaybackQueue() {
           status: item.id === currentItem.id ? "played" : item.status,
         })),
       );
+      setActiveProgress(1);
       playQueueIndex(queueItems, index + 1);
     };
 
@@ -100,12 +124,14 @@ export function usePlaybackQueue() {
       setError(`Failed to play "${currentItem.label}"`);
       setIsPlaying(false);
       setActiveItemId("");
+      setActiveProgress(0);
     };
 
     audio.play().catch(() => {
       setError(`Playback was blocked for "${currentItem.label}"`);
       setIsPlaying(false);
       setActiveItemId("");
+      setActiveProgress(0);
     });
   }, []);
 
@@ -114,6 +140,9 @@ export function usePlaybackQueue() {
     setQueue(normalized);
     setActiveItemId("");
     setError("");
+    setActiveProgress(0);
+    setActiveCurrentTime(0);
+    setActiveDuration(0);
     return normalized;
   }, [playbackRate]);
 
@@ -159,6 +188,9 @@ export function usePlaybackQueue() {
     playbackRate,
     error,
     statusLabel,
+    activeProgress,
+    activeCurrentTime,
+    activeDuration,
     enqueueResponseAudio,
     replay,
     stop,
