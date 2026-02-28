@@ -1,354 +1,340 @@
-# ListenHacks — Relational Sonification for Shopify Analytics (Project Spec)
+# Combined Spec: Voice Agent + Sonified Analytics for Non-Visual Understanding
 
-> Goal: build an embedded Shopify Admin demo that proves a novel analytics interaction: **hearing relationships between commerce metrics** (alignment, divergence, lag, regime shifts) via clean, intuitive audio that **augments** visuals (not replaces them).
+## 0) One-sentence product
 
----
-
-## 1. Product Thesis
-
-### 1.1 Core principle
-Audio is **not** a replacement for visual analytics. Audio adds a **new perceptual dimension** optimized for:
-- temporal structure (rhythm/regularity),
-- stability vs instability,
-- alignment vs mismatch,
-- lead–lag timing.
-
-Visual = precision and inspection.  
-Audio = rapid pattern recognition and structural change sensing.
-
-### 1.2 What we’re building
-An **embedded Shopify Admin app** that overlays an **auditory relational layer** on top of time-series analytics, with interaction designed like a real analytics tool:
-- zoom into a time window,
-- compare and scrub,
-- loop a selection,
-- hear how two metrics behave **together**.
+A **voice-first Shopify analytics assistant** that answers questions *and* produces **audio representations of metrics** (“sonifications”) so a merchant can independently perceive trends/anomalies without charts.
 
 ---
 
-## 2. Why we pivoted (key learnings)
+## 1) Core UX (what the user experiences)
 
-### 2.1 “Sounding cool” is not enough
-A sonification can sound “cool” because of sound design, not because it’s informative. For Shopify judges, it must read as an **analytics instrument**, not abstract audio art.
+### Primary loop (Talk + Listen)
 
-### 2.2 The first demo sounded “alien”
-We implemented a rich mapping (correlation + divergence detune/noise + lag delay + regime distortion) over a 180-day time range compressed into ~20 seconds. Result: perceptual overload.
-**Root causes:**
-- too many auditory channels changing simultaneously,
-- rapid parameter updates (no stability),
-- waveform switching and distortion created harsh timbre,
-- long horizon compressed too fast for ears to form expectations.
+1. User presses **Talk**
+2. Asks a question (“How are we doing today?”)
+3. Agent responds with:
 
-### 2.3 Time scale matters
-Audio is best for **local** structure and change. A single compressed playback of 180 days is rarely intuitive.
-We need:
-- interactive zoom and selection,
-- short windows (14–60 days) for clear listening,
-- stable baselines + high-contrast changes.
+   * **Spoken explanation** (numbers + interpretation)
+   * **Optional sonification clip(s)** that *encode the same data*
+4. User can say:
 
-### 2.4 “Real Shopify data only” isn’t practical for a sprint
-Bulk dummy order generation inside Shopify is slow (e.g., 30 min at 30%).
-Trying to force all demo structure from Shopify data increases risk.
-We must allow a hybrid approach:
-- Shopify integration for legitimacy,
-- deterministic dataset(s) for reliable structural demonstrations.
+   * “Play the trend again slower”
+   * “Sonify revenue vs orders together”
+   * “What did that spike correspond to?”
 
----
+### Two modes
 
-## 3. Target personas
+* **Explain Mode (default):** agent speaks + optionally appends sonification
+* **Listen Mode:** minimal speech; mostly sonification + short cues (“spike on Feb 24”)
 
-### 3.1 Analyst (dashboard-native)
-Wants:
-- comparisons (this period vs that),
-- relationship inspection (traffic vs sales, cart vs checkout),
-- change detection and lead–lag cues.
+### Accessibility “killer features”
 
-### 3.2 CEO / operator (quick overview)
-Wants:
-- “are we aligned/healthy?”
-- “is something off?”
-- fast, low-cognitive-load insight.
-
-We will prioritize analyst-grade interaction (zoom/scrub/compare), with optional “executive summary” later.
+* “Daily audio briefing” (summary + short trend sound)
+* “Anomaly listen” (play last 30 days where anomalies pop out)
+* “Compare two sounds” (A/B sonification for two ranges)
 
 ---
 
-## 4. Core Product Concept: Relational Sonification
+## 2) Architecture (high-level)
 
-### 4.1 Definition
-Relational sonification maps **relationships between metrics** to sound structure, not raw metric magnitude.
+**Web Client**
 
-Instead of:
-- metric → sound,
+* mic capture / transcript display
+* audio playback (agent TTS + sonification clips)
+* “Listen mode” toggles, speed/repeat controls
 
-we do:
-- relationship(metric A, metric B) → sound properties.
+**Backend (your server)**
 
-### 4.2 Why it’s commerce-first
-Commerce insights are often relational:
-- traffic ↑ but sales ↔ (quality mismatch),
-- add-to-cart ↑ but checkout ↓ (leak),
-- spend ↑ but revenue ↓ (efficiency),
-- inventory oscillations vs sales (control loop instability).
+* Metrics API (summary/timeseries/breakdown/anomalies)
+* Sonification API (generate audio from numeric series)
+* Agent router (Backboard tools)
+* ElevenLabs proxy for TTS (and optional STT)
 
----
+**Backboard Assistant**
 
-## 5. Data Strategy (Hybrid MVP)
+* reasoning + memory + tool calling
+* decides when to attach sonification + how to describe it
 
-### 5.1 Shopify integration requirements (legitimacy)
-Must run as an embedded Admin app. Must have **some real Shopify data path**:
-- fetch orders (order count, revenue),
-- show it in-app,
-- demonstrate the app is truly inside Shopify Admin.
+**ElevenLabs**
 
-### 5.2 Demo dataset requirements (reliability)
-For the relational audio to be intuitive, we need deterministic structural regimes:
-- aligned window,
-- divergence window,
-- lag window,
-- regime shift window.
-
-### 5.3 MVP hybrid approach
-Two modes (explicit):
-1. **Live Shopify Mode**
-   - pull daily order_count and revenue from Admin API
-   - show graphs
-   - (optional) compute correlation between two Shopify-derived series
-
-2. **Demo Dataset Mode (Feasibility + reliable narrative)**
-   - deterministic 60–180 day synthetic dataset with known regimes
-   - powers audio/visual alignment, divergence, lag, regime shifts
-   - used to validate mapping and demo reliably
-
-> Notes:
-- We tried “all data inside Shopify” via dummy data generator app; it was too slow and too random to guarantee clean relational regimes.
-- Hybrid is necessary for sprint feasibility and demo reliability.
+* TTS for the agent’s spoken response (streaming preferred)
 
 ---
 
-## 6. Interactive Analytics UX (must-have)
+## 3) Data model (MVP)
 
-### 6.1 Graph-native selection (brush)
-Primary interaction is direct on the chart:
-- drag handles to set start/end (integer day indices),
-- drag inside selection to pan window,
-- click to set playhead,
-- click-drag to scrub playhead.
+Minimal storage is fine (real Shopify ingestion later).
 
-Sliders / numeric inputs may exist for fine-tune, but brush is primary.
+* `orders(id, created_at, total_price, currency)`
+* `order_items(order_id, product_id, product_title, quantity, price)`
 
-### 6.2 Zoom + focus
-- selection defines analysis window,
-- “Zoom to selection” and “Reset” buttons,
-- enforce minimum selection length >= 7 days.
+Optional later:
 
-### 6.3 Playback constrained to selection
-- play within selection window,
-- loop selection by default,
-- speed control (ms/day),
-- audio and visuals must be synchronized.
-
-### 6.4 Playhead
-- vertical line on chart + optional marker dots at series values,
-- click to seek,
-- drag to scrub,
-- audio updates smoothly with ramps to avoid pops.
+* sessions/visits (for conversion), refunds, ads channels.
 
 ---
 
-## 7. The “Math Toolbox” we actually ship (MVP subset)
+## 4) “Tool Surface Area” (what the agent is allowed to call)
 
-We have a larger toolbox, but MVP implements only the highest ROI, shippable pieces:
+### Metrics API (same as before)
 
-### 7.1 Preprocessing
-- z-score normalization per window:
-  - \tilde{x}_t = (x_t - \mu_x) / \sigma_x
-  - \tilde{y}_t = (y_t - \mu_y) / \sigma_y
-- optional EMA smoothing of relational metrics (for stability)
+* `GET /api/metrics/summary?range=...`
+* `GET /api/metrics/compare?range=...&compare_to=...`
+* `GET /api/metrics/timeseries?metric=...&range=...&bucket=...`
+* `GET /api/metrics/breakdown?metric=...&by=...&range=...&limit=...`
+* `GET /api/metrics/anomalies?metric=...&range=...&bucket=...` (optional)
 
-### 7.2 Relational metrics
-1. **Rolling Pearson correlation**
-   - \rho_t = corr(\tilde{x}_{t-w+1:t}, \tilde{y}_{t-w+1:t})
+### Sonification API (new core)
 
-2. **Divergence energy**
-   - d_t = |\tilde{x}_t - \tilde{y}_t|
-   - optional EMA smoothing: \bar d_t = EMA(d_t)
+**A) Generate a sonification from a time series**
+`POST /api/sonify/series`
 
-3. **Lead–lag estimate via cross-correlation**
-   - c_t(ℓ) = corr(\tilde{x}_{t-w+1:t}, \tilde{y}_{t-w+1+ℓ:t+ℓ})
-   - ℓ*_t = argmax_{ℓ ∈ [-L, L]} c_t(ℓ)
+Request:
 
-4. **Regime shift marker (simple change-point heuristic)**
-   - Δρ_t = ρ_t - ρ_{t-1}
-   - trigger if |EMA(Δρ_t)| > θ
-   - (for MVP, markers can be pre-defined in demo dataset)
+```json
+{
+  "series": {
+    "metric": "revenue",
+    "bucket": "day",
+    "points": [{"t":"2026-02-22","v":120.5},{"t":"2026-02-23","v":98.0}]
+  },
+  "mapping": {
+    "preset": "trend_v1",
+    "duration_ms": 2500,
+    "speed": 1.0,
+    "normalize": "zscore",
+    "range_hint": "last_7d"
+  },
+  "render": { "format": "wav", "sample_rate": 24000 }
+}
+```
 
----
+Response:
 
-## 8. Audio System Design (locked-in improvements)
+```json
+{
+  "audio_url": "/api/sonify/audio/abc123.wav",
+  "meta": {
+    "duration_ms": 2500,
+    "events": [
+      {"t":"2026-02-23","type":"dip","strength":0.7}
+    ]
+  }
+}
+```
 
-### 8.1 Non-negotiable perceptual rules
-We learned the baseline sounded messy. Fixes are now policy:
+**B) Generate a comparative sonification (A vs B)**
+`POST /api/sonify/compare`
 
-1) **No waveform switching** based on correlation state  
-2) **No distortion** as part of correlation mapping  
-3) Correlation encoded **only** via interval (pitch ratio)  
-4) Use **smoothing + hysteresis** to prevent jitter/flapping  
-5) Use **attack/release + frequency ramps** to avoid clicks/pops  
-6) Update chord state slower than playhead (hold time / cadence)  
-7) Modular layers, **OFF by default** except harmony
+Request:
 
-### 8.2 Audio layers
-- **Harmony (default ON):** correlation → consonance interval
-- **Tension (optional):** divergence → subtle gain shading (not detune)
-- **Echo (optional):** lag → small delay ONLY if lag ≥ 2 days (avoid “spacey”)
-- **Events (optional):** regime shift → short “tick” earcon (not distortion)
+```json
+{
+  "a": { "label":"this_week", "points":[...] },
+  "b": { "label":"last_week", "points":[...] },
+  "mapping": { "preset":"compare_v1", "duration_ms": 3000 }
+}
+```
 
-### 8.3 Core harmony mapping
-- base frequency f0 = 220 Hz
-- oscillator A at f0
-- oscillator B at f0 * ratio
+Response:
 
-Discrete correlation states:
-- corr > 0.7 → perfect fifth (3/2)
-- 0.3–0.7 → major third (5/4)
-- -0.3–0.3 → unison (1)
-- corr < -0.3 → tritone-ish (sqrt(2) or 45/32)
+```json
+{
+  "audio_url": "/api/sonify/audio/cmp789.wav",
+  "meta": { "explain_hint": "A is brighter/higher than B when larger" }
+}
+```
 
-Stability:
-- EMA smoothing of correlation:
-  - rhoE[t] = 0.8*rhoE[t-1] + 0.2*rho[t]
-- hysteresis thresholds:
-  - enter fifth if rhoE > 0.75; leave if rhoE < 0.65
-  - enter third if rhoE > 0.35; leave if rhoE < 0.25
-  - enter tritone if rhoE < -0.35; leave if rhoE > -0.25
-  - else unison
-- chord update cadence: every 2–3 days or min hold duration
+**C) “Anomaly listen”**
+`POST /api/sonify/anomalies`
 
-Click-free audio:
-- gain attack: 40ms
-- gain release: 120ms
-- frequency ramp: 50–80ms on changes
-
----
-
-## 9. Visual Pairing Design
-
-### 9.1 Visual elements
-- main chart: two series (traffic x, sales y)
-- correlation strip chart beneath
-- selection overlay (inside vs outside)
-- regime shift marker (vertical dashed line)
-- divergence highlight (soft red fill)
-- playhead vertical line (+ optional markers)
-
-### 9.2 Visual–audio synchronization
-Changes must align:
-- chord changes align with correlation state change,
-- divergence highlight aligns with tension layer,
-- lag indicator aligns with echo layer,
-- regime marker aligns with event earcon.
+* Input: timeseries + anomaly list
+* Output: sonification where anomalies get a distinct “earcon” (audio marker)
 
 ---
 
-## 10. Dataset spec (feasibility demo dataset)
+## 5) Sonification design (MVP presets)
 
-### 10.1 Deterministic 180-day dataset (initial)
-Four regimes:
-- Region A (0–59): correlated + mild seasonality
-- Region B (60–89): divergence (traffic spike, sales flat)
-- Region C (90–129): lag (sales follows traffic after 3 days)
-- Region D (130–179): regime shift (conversion drop)
+### Goals
 
-Equations:
-- A: x = 100 + 20*sin(2πt/14), y = 0.05x + N(0,3)
-- B: x = 250 + 30*sin(2πt/7),  y = constant-ish + N(0,3)
-- C: x = 120 + 25*sin(2πt/14), y = 0.05*x[t-3] + N(0,3)
-- D: x = 110 + 15*sin(2πt/14), y = 0.02x + N(0,3)
+* Make **shape** (up/down, volatility, spikes) perceptible quickly
+* Be consistent so merchants learn it like a “sound legend”
+* Avoid needing musical expertise
 
-### 10.2 Scale guideline
-For intuitive listening, do not autoplay huge horizons. Use:
-- short selection windows: 14–60 days
-- interactive zoom and looping
-- recommended speeds:
-  - baseline: ~800–1000 ms/day
-  - divergence: ~500 ms/day
-  - lag: ~900–1200 ms/day
-  - regime marker: ~1200–1600 ms/day (±5 days)
+### Preset: `trend_v1` (single metric)
 
----
+* **Pitch** encodes value (higher value → higher pitch)
+* **Loudness** lightly encodes value change magnitude (bigger change → louder)
+* **Time** maps to time buckets uniformly (e.g., 7 days → 2.5s)
+* **Earcons**:
 
-## 11. Demo plan (4 minutes, revised)
+  * spike: short “tick”
+  * dip: short “thud”
+  * anomaly: distinct “chime” overlay
 
-### 0:00–0:45 — Intuitive hook
-- show Traffic vs Sales
-- play harmony in aligned window
-- “when aligned it sounds harmonious; when mismatch, dissonant”
+Normalization options:
 
-### 0:45–1:30 — Divergence
-- zoom into divergence window
-- hear tension (optional layer)
-- show divergence shading
+* `minmax` (good for “shape only”)
+* `zscore` (good for “outliers pop out”)
+* `none` (raw scale; rarely good)
 
-### 1:30–2:30 — Lag
-- zoom into lag window
-- enable echo layer
-- show detected lag value
+### Preset: `compare_v1` (two ranges)
 
-### 2:30–3:20 — Regime shift
-- zoom around regime marker
-- play event earcon at shift
-- show before/after pattern
+* A plays in first half, B plays in second half (or call-and-response)
+* Add a brief spoken cue: “First is this week, second is last week.”
+* (Optional later) stereo split (A left, B right)
 
-### 3:20–4:00 — Generalization + Shopify tie-in
-- show pairing dropdown (future: cart→checkout, spend→revenue)
-- show “Live Shopify mode” pulling orders/revenue (legitimacy)
+### Preset: `multitrack_v1` (two metrics)
+
+* Revenue → pitch
+* Orders → percussion density (more orders → denser clicks)
+* Keep it subtle so it’s not noisy
 
 ---
 
-## 12. Implementation scope (hackathon MVP)
+## 6) Backboard Assistant spec (combined reasoning + sonification)
 
-### Must ship
-- Embedded Shopify Admin app skeleton
-- Demo dataset mode with interactive brush + playhead
-- Rolling correlation computation on selection window
-- Clean Harmony-only audio (per locked-in rules)
-- Optional toggles for tension/echo/events (off by default)
-- Jump buttons: Calibrate (Region A), Divergence, Lag, Shift
+### Persona & rules
 
-### Nice-to-have
-- Live Shopify data mode:
-  - fetch daily order_count and revenue via Admin API
-  - show on same chart
-  - allow switching to demo dataset
+* Voice-first, non-visual analytics assistant
+* Always:
 
-### Explicitly out-of-scope (MVP)
-- heavy DSP/music synthesis
-- multi-metric orchestra sonification
-- PCA/UMAP/clustering/graphs/text signals
-- full forecasting models
-- “all data inside Shopify” large-scale order generation
+  * lead with numbers
+  * keep spoken responses short (<= 15–25s default)
+  * attach sonification when it improves independent understanding:
+
+    * trends, comparisons, volatility, anomalies
+  * describe *how to listen*: “Higher notes mean higher revenue.”
+
+### Output schema from agent
+
+```json
+{
+  "spoken": "Today: $1,234 revenue from 42 orders. That's up 12% from yesterday. I'll play a 7-day revenue trend—higher notes mean higher revenue, and the chime marks an anomaly.",
+  "display": {
+    "bullets": [
+      "Revenue: $1,234 (+12% vs yesterday)",
+      "Orders: 42 (+5%)",
+      "AOV: $29.39 (+6.9%)"
+    ],
+    "suggested_questions": [
+      "Want top products for the dip day?",
+      "Play revenue vs orders together?"
+    ]
+  },
+  "audio": [
+    {
+      "type": "sonification",
+      "label": "Revenue trend (7d)",
+      "audio_url": "/api/sonify/audio/abc123.wav"
+    },
+    {
+      "type": "tts",
+      "label": "Agent response",
+      "audio_url": "/api/tts/audio/tts555.mp3"
+    }
+  ],
+  "tool_trace": [
+    {"tool":"metrics_compare","args":{"range":"today","compare_to":"yesterday"}},
+    {"tool":"metrics_timeseries","args":{"metric":"revenue","range":"last_7d","bucket":"day"}},
+    {"tool":"sonify_series","args":{"preset":"trend_v1","duration_ms":2500}}
+  ]
+}
+```
+
+### Memory keys
+
+* `default_range`, `default_bucket`, `last_metric`
+* `listen_mode` (bool)
+* `sonify_default` (always/sometimes/never)
+* `sonify_speed` (0.75/1.0/1.25)
+* `tz`, `store_id/shop_domain`
 
 ---
 
-## 13. Success criteria
+## 7) ElevenLabs integration spec
 
-### Perceptual success (most important)
-- Region A sounds calm and stable (not messy)
-- divergence window produces an immediate audible contrast
-- lag feels like timing offset when enabled
-- regime marker produces a clearly noticeable event
+### TTS
 
-### Demo success
-- user can select 20-day window and instantly understand what they’re hearing
-- audio changes align with visible changes
-- Shopify judges believe it could live inside Admin analytics
+* Input: `spoken`
+* Output: streamed audio to client
+* Voice: pick one consistent voice for demo
+
+### STT (choose one)
+
+* MVP fastest: browser Web Speech → text to backend
+* Better: ElevenLabs STT for consistent quality
 
 ---
 
-## 14. Next steps checklist (pre-hackathon)
-- [ ] Implement locked-in audio simplification (no waveform switching, no distortion)
-- [ ] Add EMA + hysteresis + chord hold
-- [ ] Ensure brush selection is primary UX
-- [ ] Add playhead seek/scrub with smooth ramps
-- [ ] Add jump-to-region buttons + recommended speed presets
-- [ ] (Optional) wire a minimal Shopify orders endpoint to prove integration
+## 8) Client UI spec (minimal but strong)
+
+### Layout
+
+* Big **Talk** button
+* Transcript panel (what user said)
+* Response panel (bullets + suggested questions)
+* Audio controls:
+
+  * Play/Pause
+  * Repeat
+  * Speed (0.75x / 1x / 1.25x)
+  * Toggle: “Listen mode”
+
+### Playback sequence
+
+Default:
+
+1. Play agent TTS
+2. Immediately play sonification clip(s)
+3. Allow user to replay sonification alone (“Play the sound again”)
+
+---
+
+## 9) Implementation plan (fast path)
+
+### Phase 1: Metrics endpoints (half day)
+
+Implement `summary`, `compare`, `timeseries`, `breakdown`.
+Use mock data if needed to unblock agent.
+
+### Phase 2: Sonification service (half day)
+
+Implement `sonify/series` with `trend_v1`:
+
+* normalize
+* map to pitch over time
+* render WAV
+* return `audio_url`
+
+(You can implement rendering via a simple audio synthesis library or generate PCM manually—keep it deterministic.)
+
+### Phase 3: Backboard agent + tools (half day)
+
+* Tool routing: metrics + sonify
+* Response schema + “when to sonify” rules
+
+### Phase 4: ElevenLabs TTS + UI loop (half day)
+
+* Push-to-talk → transcript
+* Call backend → get response + audio urls
+* Play TTS then sonification
+
+### Phase 5: Demo polish (half day)
+
+* Daily briefing
+* Anomaly earcon (optional)
+* Tight scripted flow
+
+---
+
+## 10) Demo script (90 seconds)
+
+1. “Give me today’s summary.”
+2. “Compare to yesterday.”
+3. “Play the 7-day revenue trend sound.”
+4. “Where was the anomaly?”
+5. “Break down that day by top products.”
+6. “Play revenue vs orders together.”
+
+---
