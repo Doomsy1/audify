@@ -1,36 +1,72 @@
 /* eslint-disable react/prop-types */
 import { useEffect, useMemo, useState } from "react";
-import {
-  normalizeSeriesPoints,
-  resolvePlayheadIndex,
-} from "../../lib/voice/timeseriesChart.js";
 
-const CHART_WIDTH = 760;
-const CHART_HEIGHT = 240;
-const PAD = { top: 20, right: 12, bottom: 30, left: 12 };
-const MIN_ZOOM_WINDOW = 28;
-const MAX_ZOOM_WINDOW = 48;
+const TOTAL = 180;
+const CW = 680;
+const PAD = { t: 10, b: 10, l: 4, r: 4 };
+const INNER_W = CW - PAD.l - PAD.r;
+const CHART_H = 150;
+const INNER_H = CHART_H - PAD.t - PAD.b;
 
-function buildLinePath(points, toX, toY) {
-  if (!points.length) return "";
-  return points
-    .map((point, index) => `${index ? "L" : "M"}${toX(point.i).toFixed(1)},${toY(point.v).toFixed(1)}`)
-    .join(" ");
+function mulberry32(seed) {
+  let s = seed;
+  return () => {
+    s |= 0;
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-function movingAverage(points, radius = 2) {
-  if (!points.length) return [];
-  return points.map((point, index) => {
+function fallbackSeriesPoints() {
+  const rand = mulberry32(42);
+  const points = [];
+  for (let t = 0; t < TOTAL; t += 1) {
+    const base = 120 + 26 * Math.sin((2 * Math.PI * t) / 18);
+    const noise = (rand() - 0.5) * 10;
+    points.push({ t: `d${t + 1}`, v: base + noise });
+  }
+  return points;
+}
+
+function clamp01(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(1, numeric));
+}
+
+function movingAverage(values, radius = 2) {
+  return values.map((_, index) => {
     let sum = 0;
     let count = 0;
     for (let offset = -radius; offset <= radius; offset += 1) {
-      const item = points[index + offset];
-      if (!item) continue;
-      sum += item.v;
+      const value = values[index + offset];
+      if (!Number.isFinite(value)) continue;
+      sum += value;
       count += 1;
     }
-    return { ...point, v: count ? sum / count : point.v };
+    return count ? sum / count : values[index];
   });
+}
+
+function normY(arr, height) {
+  const vals = arr.filter((v) => Number.isFinite(v));
+  if (!vals.length) return arr.map(() => height / 2);
+  const min = Math.min(...vals);
+  const range = (Math.max(...vals) - min) || 1;
+  return arr.map((v) => (Number.isFinite(v) ? height - ((v - min) / range) * height : null));
+}
+
+function buildSvgPath(ys, lo, hi, toX, padTop) {
+  let d = "";
+  for (let i = lo; i <= hi; i += 1) {
+    if (ys[i] == null) continue;
+    const px = toX(i);
+    const py = padTop + ys[i];
+    d += d ? ` L${px.toFixed(1)},${py.toFixed(1)}` : `M${px.toFixed(1)},${py.toFixed(1)}`;
+  }
+  return d;
 }
 
 export function TimeSeriesSyncChart({
@@ -39,7 +75,6 @@ export function TimeSeriesSyncChart({
   isToolCalling,
   toolTrace,
 }) {
-  const normalized = useMemo(() => normalizeSeriesPoints(series?.points ?? []), [series]);
   const [toolCursorProgress, setToolCursorProgress] = useState(0);
 
   useEffect(() => {
@@ -49,47 +84,41 @@ export function TimeSeriesSyncChart({
     }
     const interval = setInterval(() => {
       setToolCursorProgress((prev) => {
-        const next = prev + 0.035;
+        const next = prev + 0.028;
         return next > 1 ? 0 : next;
       });
-    }, 80);
+    }, 90);
     return () => clearInterval(interval);
   }, [isToolCalling]);
 
-  const innerWidth = CHART_WIDTH - PAD.left - PAD.right;
-  const innerHeight = CHART_HEIGHT - PAD.top - PAD.bottom;
-  const points = normalized.map((point, index) => ({
-    i: index,
-    v: point.v,
-    t: point.t,
-  }));
-  const smoothed = movingAverage(points, 2);
+  const rawPoints = useMemo(() => {
+    const points = series?.points?.length ? series.points : fallbackSeriesPoints();
+    return points.slice(0, TOTAL).map((point, index) => ({
+      i: index,
+      t: point?.t ?? `d${index + 1}`,
+      v: Number(point?.v ?? 0),
+    }));
+  }, [series]);
+
+  const xData = rawPoints.map((point) => point.v);
+  const yData = movingAverage(xData, 2);
+  const nx = normY(xData, INNER_H);
+  const ny = normY(yData, INNER_H);
+
+  const viewStart = 0;
+  const viewEnd = Math.max(0, rawPoints.length - 1);
+  const viewLen = Math.max(1, viewEnd - viewStart);
+  const toX = (i) => PAD.l + ((i - viewStart) / viewLen) * INNER_W;
+
+  const pathX = buildSvgPath(nx, viewStart, viewEnd, toX, PAD.t);
+  const pathY = buildSvgPath(ny, viewStart, viewEnd, toX, PAD.t);
+
   const markerTrace = Array.isArray(toolTrace) ? toolTrace : [];
-
-  const cursorProgress = isToolCalling ? toolCursorProgress : Math.max(0, Math.min(1, Number(activeProgress) || 0));
-  const playheadIndex = resolvePlayheadIndex(points.length, cursorProgress);
-
-  const zooming = points.length > MAX_ZOOM_WINDOW && (isToolCalling || cursorProgress > 0);
-  const windowSize = Math.max(MIN_ZOOM_WINDOW, Math.min(MAX_ZOOM_WINDOW, points.length));
-  const rawStart = playheadIndex - Math.floor(windowSize / 2);
-  const viewStart = zooming ? Math.max(0, Math.min(points.length - windowSize, rawStart)) : 0;
-  const viewEnd = zooming ? Math.min(points.length - 1, viewStart + windowSize - 1) : Math.max(0, points.length - 1);
-  const visiblePoints = points.filter((point) => point.i >= viewStart && point.i <= viewEnd);
-  const visibleSmoothed = smoothed.filter((point) => point.i >= viewStart && point.i <= viewEnd);
-
-  const valueSet = [...visiblePoints.map((point) => point.v), ...visibleSmoothed.map((point) => point.v)];
-  const valueMin = valueSet.length ? Math.min(...valueSet) : 0;
-  const valueMax = valueSet.length ? Math.max(...valueSet) : 1;
-  const valueRange = valueMax - valueMin || 1;
-  const viewRange = Math.max(1, viewEnd - viewStart);
-
-  const toX = (index) => PAD.left + ((index - viewStart) / viewRange) * innerWidth;
-  const toY = (value) => PAD.top + innerHeight - ((value - valueMin) / valueRange) * innerHeight;
-  const pathPrimary = buildLinePath(visiblePoints, toX, toY);
-  const pathSmooth = buildLinePath(visibleSmoothed, toX, toY);
-  const cursorX = toX(Math.max(viewStart, Math.min(viewEnd, playheadIndex)));
-  const playheadPoint = points[playheadIndex];
-  const playheadSmooth = smoothed[playheadIndex];
+  const cursorProgress = isToolCalling ? toolCursorProgress : clamp01(activeProgress);
+  const playhead = Math.round(cursorProgress * Math.max(0, rawPoints.length - 1));
+  const phX = Number.isFinite(playhead) ? toX(playhead) : null;
+  const phYx = phX !== null && nx[playhead] != null ? PAD.t + nx[playhead] : null;
+  const phYy = phX !== null && ny[playhead] != null ? PAD.t + ny[playhead] : null;
 
   return (
     <section aria-labelledby="timeseries-sync-heading">
@@ -97,82 +126,69 @@ export function TimeSeriesSyncChart({
         Time Series
       </h3>
       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#637381" }}>
-        Always visible. Cursor scans during tool calls, zooms around activity, and locks to playback.
+        Legacy sonify graph view. Cursor sweeps during tool calls, then follows playback.
       </p>
 
-      <div
-        style={{
-          border: "1px solid #dfe3e8",
-          borderRadius: 8,
-          padding: 8,
-          background: "#fff",
-          transform: isToolCalling ? "scale(1.01)" : "scale(1)",
-          transformOrigin: "center top",
-          transition: "transform 180ms ease",
-        }}
-      >
+      <div style={{ transform: isToolCalling ? "scale(1.01)" : "scale(1)", transformOrigin: "center top", transition: "transform 180ms ease" }}>
+        <div style={{ fontSize: 11, color: "#555", marginBottom: 3, display: "flex", gap: 12, alignItems: "center" }}>
+          <span><span style={{ color: "#5c6ac4" }}>●</span> Trend</span>
+          <span><span style={{ color: "#47c1bf" }}>●</span> Smoothed</span>
+          <span style={{ marginLeft: "auto", fontSize: 10, color: "#aaa" }}>
+            tool calls = dashed markers
+          </span>
+        </div>
         <svg
           width="100%"
-          viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+          viewBox={`0 0 ${CW} ${CHART_H}`}
           role="img"
-          aria-label="Time series line chart with synced tool and playback cursor"
-          style={{ display: "block" }}
+          aria-label="Legacy style time series chart with synced playhead cursor"
+          style={{
+            display: "block",
+            border: "1px solid #e1e3e5",
+            borderRadius: 4,
+            background: "#fafbfb",
+          }}
         >
-          <rect x={PAD.left} y={PAD.top} width={innerWidth} height={innerHeight} fill="#fafbfb" stroke="#e1e3e5" />
-          <line x1={PAD.left} y1={PAD.top + innerHeight} x2={PAD.left + innerWidth} y2={PAD.top + innerHeight} stroke="#d3dce7" />
-          <line x1={PAD.left} y1={PAD.top + innerHeight / 2} x2={PAD.left + innerWidth} y2={PAD.top + innerHeight / 2} stroke="#dfe3e8" strokeDasharray="2,3" />
-          <text x={PAD.left + 4} y={PAD.top - 5} fontSize="10" fill="#637381">
-            <tspan fill="#5c6ac4">●</tspan> Trend
-            <tspan dx="12" fill="#47c1bf">●</tspan>
-            <tspan dx="4" fill="#637381">Smoothed</tspan>
-          </text>
+          <defs>
+            <filter id="ph-glow">
+              <feDropShadow dx="0" dy="0" stdDeviation="2" floodColor="#ff6900" floodOpacity="0.65" />
+            </filter>
+          </defs>
 
-          {pathPrimary ? (
-            <>
-              <path d={pathPrimary} fill="none" stroke="#5c6ac4" strokeWidth="1.9" />
-              <path d={pathSmooth} fill="none" stroke="#47c1bf" strokeWidth="1.4" opacity="0.95" />
-            </>
-          ) : (
-            <text x={PAD.left + 8} y={PAD.top + 22} fontSize="12" fill="#6b7280">
-              No trend data yet. Ask the assistant to play a trend.
-            </text>
-          )}
+          <line x1={PAD.l} y1={PAD.t + INNER_H} x2={PAD.l + INNER_W} y2={PAD.t + INNER_H} stroke="#ddd" strokeWidth={1} />
+          <line x1={PAD.l} y1={PAD.t + INNER_H / 2} x2={PAD.l + INNER_W} y2={PAD.t + INNER_H / 2} stroke="#e1e3e5" strokeDasharray="2,2" strokeWidth={1} />
 
           {markerTrace.map((step, index) => {
-            const x = PAD.left + ((index + 1) / (markerTrace.length + 1)) * innerWidth;
+            const x = PAD.l + ((index + 1) / (markerTrace.length + 1)) * INNER_W;
             return (
               <line
                 key={`${step.tool}-${index}`}
                 x1={x}
-                y1={PAD.top}
+                y1={PAD.t}
                 x2={x}
-                y2={PAD.top + innerHeight}
+                y2={PAD.t + INNER_H}
                 stroke="#de3618"
-                strokeDasharray="2,3"
-                strokeWidth="1"
-                opacity="0.55"
+                strokeWidth={1}
+                strokeDasharray="3,3"
+                opacity={0.5}
               />
             );
           })}
 
-          {(isToolCalling || pathPrimary) ? (
-            <g>
-              <line x1={cursorX} y1={PAD.top} x2={cursorX} y2={PAD.top + innerHeight} stroke="#ff6900" strokeWidth="2" />
-              {playheadPoint ? (
-                <circle cx={cursorX} cy={toY(playheadPoint.v)} r="4.5" fill="#5c6ac4" stroke="#fff" strokeWidth="1.5" />
-              ) : null}
-              {playheadSmooth ? (
-                <circle cx={cursorX} cy={toY(playheadSmooth.v)} r="4.5" fill="#47c1bf" stroke="#fff" strokeWidth="1.5" />
-              ) : null}
+          <path d={pathX} fill="none" stroke="#5c6ac4" strokeWidth="1.5" />
+          <path d={pathY} fill="none" stroke="#47c1bf" strokeWidth="1.5" />
+
+          {phX !== null ? (
+            <g style={{ pointerEvents: "none" }} filter="url(#ph-glow)">
+              <line x1={phX} y1={PAD.t} x2={phX} y2={PAD.t + INNER_H} stroke="#ff6900" strokeWidth={2} />
+              {phYx !== null ? <circle cx={phX} cy={phYx} r={4.5} fill="#5c6ac4" stroke="#fff" strokeWidth={1.5} /> : null}
+              {phYy !== null ? <circle cx={phX} cy={phYy} r={4.5} fill="#47c1bf" stroke="#fff" strokeWidth={1.5} /> : null}
+              <rect x={phX - 14} y={PAD.t - 1} width={28} height={13} rx={3} fill="#ff6900" opacity={0.9} />
+              <text x={phX} y={PAD.t + 9} textAnchor="middle" fill="#fff" fontSize={8} fontWeight="bold">
+                {playhead}
+              </text>
             </g>
           ) : null}
-
-          <text x={PAD.left} y={CHART_HEIGHT - 8} fontSize="10" fill="#8c9196">
-            {viewStart}
-          </text>
-          <text x={PAD.left + innerWidth - 18} y={CHART_HEIGHT - 8} fontSize="10" fill="#8c9196">
-            {viewEnd}
-          </text>
         </svg>
       </div>
     </section>
