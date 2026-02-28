@@ -69,13 +69,15 @@ export function VoiceAnalyticsScreen({
     window.open(standaloneUrl, "_blank", "noopener,noreferrer");
   }
 
+  const showStandaloneCta = Boolean(standaloneUrl) && !hideStandaloneCta;
+
   return (
     <div style={{ display: "grid", gap: 14, maxWidth: 760 }}>
       <p style={{ margin: 0, color: "#637381", fontSize: 13 }}>
         Ask one question at a time. The assistant responds with concise speech and queued sonification.
       </p>
 
-      {speech.embeddedContext && !hideStandaloneCta ? (
+      {showStandaloneCta ? (
         <div
           style={{
             display: "flex",
@@ -89,7 +91,9 @@ export function VoiceAnalyticsScreen({
           }}
         >
           <span style={{ fontSize: 12, color: "#52636f" }}>
-            Chrome can block microphone prompts inside Shopify&apos;s embedded iframe.
+            {speech.embeddedContext
+              ? "Chrome can block microphone prompts inside Shopify&apos;s embedded iframe."
+              : "If microphone access does not prompt here, try the standalone voice page on the app domain."}
           </span>
           <button
             type="button"

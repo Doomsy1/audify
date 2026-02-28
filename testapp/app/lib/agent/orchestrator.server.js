@@ -3,7 +3,7 @@ import {
   normalizeAgentRequest,
 } from "../contracts/agent";
 import { getAgentMemory, updateAgentMemory } from "./memory.server";
-import { maybeRefineAgentResponse } from "./backboardAgent.server";
+import { getBackboardSettings, maybeRefineAgentResponse } from "./backboardAgent.server";
 import { runAgentTool } from "./toolRegistry.server";
 import { synthesizeSpeechClip } from "../tts/elevenlabs.server";
 
@@ -349,6 +349,7 @@ function buildAudioArray(ttsClip, sonification) {
 
 export async function respondToAgentRequest({ payload, shop, accessToken }) {
   const requestBody = normalizeAgentRequest(payload);
+  const backboard = getBackboardSettings();
   const memoryKey = buildMemoryKey({
     shop,
     sessionId: requestBody.context.session_id,
@@ -368,6 +369,7 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
   });
 
   let displayPayload = fallbackResponse;
+  let refinedWithBackboard = false;
   try {
     const refined = await maybeRefineAgentResponse({
       utterance: requestBody.utterance,
@@ -376,6 +378,7 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
       tool_results: Object.fromEntries(results.entries()),
       fallback: fallbackResponse,
     });
+    refinedWithBackboard = Boolean(refined);
     displayPayload = sanitizeRefinedResponse(refined, fallbackResponse);
   } catch (_) {
     displayPayload = fallbackResponse;
@@ -405,5 +408,11 @@ export async function respondToAgentRequest({ payload, shop, accessToken }) {
     display: displayPayload.display,
     audio: buildAudioArray(ttsClip, sonification),
     tool_trace: toolTrace,
+    meta: {
+      backboard: {
+        attempted: backboard.configured,
+        refined: refinedWithBackboard,
+      },
+    },
   };
 }
