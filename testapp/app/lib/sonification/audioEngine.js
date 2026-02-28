@@ -1,27 +1,20 @@
-const BASE_FREQUENCY = 220;
-const MASTER_GAIN = 0.12;
-const OSC_GAIN = 0.5;
+// Shared constants — kept in sync with server-side presets via sharedMapping.js.
+import {
+  BASE_FREQUENCY,
+  MASTER_GAIN,
+  OSC_GAIN,
+  CHORD_RATIOS,
+  CHORD_NAMES,
+} from "./sharedMapping.js";
+
+export { CHORD_RATIOS, CHORD_NAMES };
+
 const ATTACK_SECONDS = 0.04;
 const RELEASE_SECONDS = 0.12;
 const GLIDE_SECONDS = 0.07;
 const UPDATE_INTERVAL_STEPS = 2;
 const MIN_STATE_HOLD_STEPS = 2;
 const SEEK_THROTTLE_MS = 30;
-const TRITONE_RATIO = Math.SQRT2;
-
-export const CHORD_RATIOS = {
-  fifth: 3 / 2,
-  third: 5 / 4,
-  unison: 1,
-  tritone: TRITONE_RATIO,
-};
-
-export const CHORD_NAMES = {
-  fifth: "perfect fifth (3:2)",
-  third: "major third (5:4)",
-  unison: "unison (1:1)",
-  tritone: "tritone (sqrt(2):1)",
-};
 
 function ramp(param, now, target, seconds = GLIDE_SECONDS) {
   param.cancelScheduledValues(now);

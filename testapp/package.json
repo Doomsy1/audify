@@ -19,7 +19,10 @@
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test:voice": "node --test app/lib/voice/__tests__/*.test.js",
-    "test:agent": "node --test app/lib/agent/__tests__/*.test.js"
+    "test:agent": "node --test app/lib/agent/__tests__/*.test.js",
+    "test:metrics": "node --test app/lib/metrics/__tests__/*.test.js",
+    "test:sonification": "node --test app/lib/sonification/__tests__/*.test.js",
+    "test": "node --test app/lib/voice/__tests__/*.test.js app/lib/metrics/__tests__/*.test.js app/lib/sonification/__tests__/*.test.js"
   },
   "type": "module",
   "engines": {
