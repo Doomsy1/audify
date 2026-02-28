@@ -18,7 +18,8 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test:voice": "node --test app/lib/voice/__tests__/*.test.js"
+    "test:voice": "node --test app/lib/voice/__tests__/*.test.js",
+    "test:agent": "node --test app/lib/agent/__tests__/*.test.js"
   },
   "type": "module",
   "engines": {
