@@ -8,6 +8,7 @@ import { PlaybackQueue } from "../components/voice/PlaybackQueue.jsx";
 import { ListenModeToggle } from "../components/voice/ListenModeToggle.jsx";
 import { SuggestedQuestions } from "../components/voice/SuggestedQuestions.jsx";
 import { ToolTraceGraph } from "../components/voice/ToolTraceGraph.jsx";
+import { TimeSeriesSyncChart } from "../components/voice/TimeSeriesSyncChart.jsx";
 import { useSpeechCapture } from "../lib/voice/useSpeechCapture.js";
 import { usePlaybackQueue } from "../lib/voice/usePlaybackQueue.js";
 import { useVoiceSession } from "../lib/voice/useVoiceSession.js";
@@ -31,6 +32,7 @@ function createInteractionId() {
 export default function UnifiedAssistantRoute() {
   const { standaloneUrl } = useLoaderData();
   const [textInput, setTextInput] = useState("");
+  const [latestSeries, setLatestSeries] = useState(null);
   const [interactionHistory, setInteractionHistory] = useState([]);
   const lastQueuedResponseKeyRef = useRef("");
   const session = useVoiceSession();
@@ -48,6 +50,7 @@ export default function UnifiedAssistantRoute() {
       return;
     }
 
+    setLatestSeries(response?.chart?.series ?? null);
     setInteractionHistory((previous) => [
       ...previous.slice(-7),
       {
@@ -206,7 +209,7 @@ export default function UnifiedAssistantRoute() {
 
             <form onSubmit={handleTextSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <label htmlFor="agent-prompt" style={{ display: "none" }}>
-                Ask the analytics assistant
+                Ask the sonify assistant
               </label>
               <input
                 id="agent-prompt"
@@ -254,8 +257,8 @@ export default function UnifiedAssistantRoute() {
                     fontSize: 12,
                     cursor: session.isLoading ? "not-allowed" : "pointer",
                   }}
-                >
-                  {question}
+            >
+              {question}
                 </button>
               ))}
             </div>
@@ -290,6 +293,13 @@ export default function UnifiedAssistantRoute() {
             onReplay={playback.replay}
             onStop={playback.stop}
             onRateChange={handleRateChange}
+          />
+
+          <TimeSeriesSyncChart
+            series={latestSeries}
+            activeProgress={playback.activeProgress}
+            isToolCalling={session.isLoading}
+            toolTrace={session.latestResponse?.tool_trace ?? []}
           />
 
           <SuggestedQuestions
