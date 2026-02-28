@@ -1,5 +1,9 @@
 import { authenticate } from "../shopify.server";
 import { respondToAgentRequest } from "../lib/agent/orchestrator.server";
+import {
+  extractVoiceDirectToken,
+  verifyVoiceDirectToken,
+} from "../lib/voice/directAccess.server.js";
 
 function badRequest(message, status = 400) {
   return Response.json(
@@ -13,8 +17,6 @@ function badRequest(message, status = 400) {
 }
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
-
   let payload;
   try {
     payload = await request.json();
@@ -23,10 +25,17 @@ export const action = async ({ request }) => {
   }
 
   try {
+    const directAccess = verifyVoiceDirectToken(extractVoiceDirectToken(request));
+    let shop = directAccess?.shop;
+
+    if (!shop) {
+      const { session } = await authenticate.admin(request);
+      shop = session?.shop;
+    }
+
     const response = await respondToAgentRequest({
       payload,
-      shop: session?.shop,
-      accessToken: session?.accessToken,
+      shop,
     });
 
     return Response.json(response);

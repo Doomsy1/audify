@@ -18,3 +18,12 @@ test("detectVoiceCapabilities falls back to text when speech APIs are unavailabl
   assert.equal(capabilities.speechRecognitionSupported, false);
   assert.equal(capabilities.fallbackToText, true);
 });
+
+test("detectVoiceCapabilities reports embedded iframe contexts", () => {
+  const capabilities = detectVoiceCapabilities({
+    self: {},
+    top: {},
+  });
+
+  assert.equal(capabilities.embeddedContext, true);
+});

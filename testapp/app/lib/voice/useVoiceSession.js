@@ -137,7 +137,7 @@ export function voiceSessionReducer(state, action) {
   return state;
 }
 
-export function useVoiceSession() {
+export function useVoiceSession({ directAccessToken = "" } = {}) {
   const [state, dispatch] = useReducer(
     voiceSessionReducer,
     initialVoiceSessionState,
@@ -165,7 +165,10 @@ export function useVoiceSession() {
     try {
       const response = await fetch(VOICE_RESPONSE_ENDPOINT, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(directAccessToken ? { "X-Voice-Direct-Token": directAccessToken } : {}),
+        },
         body: JSON.stringify(payload),
       });
       const { contentType, bodyText, responseJson } = await readResponseBody(response);
@@ -205,7 +208,7 @@ export function useVoiceSession() {
       });
       return null;
     }
-  }, [state.listenMode, state.playbackRate, state.sessionId]);
+  }, [directAccessToken, state.listenMode, state.playbackRate, state.sessionId]);
 
   const actions = useMemo(
     () => ({
