@@ -1,1 +1,2 @@
-# Accessible data analysis through sonification for the visually impaired
+# Talk to your data as a merchant.
+
